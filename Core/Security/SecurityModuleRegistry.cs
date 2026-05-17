@@ -16,9 +16,34 @@ public static class SecurityModuleRegistry
         Register("gmw3110-2010-not-implemented",
             () => new Gmw3110_2010_Generic(new NotImplementedAlgorithm(),
                                            id: "gmw3110-2010-not-implemented"));
+        // STRICT 5-byte SecurityAccess for DPS-recognised E92-family ECMs.
+        // Computes the exact key DPS would compute and rejects anything else,
+        // using the algorithm reverse-engineered from sa015bcr.dll on
+        // 2026-05-17 and the password captured via tools/sa015bcr_hook/.
+        // The algorithm is per-algoId; the password we ship defaults to the
+        // E92/Algo 92 value. Override via SecurityModuleConfig if you have a
+        // different captured password (e.g. for another DPS-supported 5-byte
+        // algoId).
+        //
+        // (The earlier 2-byte open-source "Algo 92" implementation
+        // [E38Algorithm], based on jakka351 / pcmhacking community sources,
+        // was empirically wrong: the algorithm DPS actually labels "Algo 92"
+        // is the 5-byte cipher implemented in sale.dll + sa015bcr.dll.
+        // E38Algorithm is retained as a class for its own direct tests but
+        // no longer holds the gm-algo-92 registry slot.)
         Register("gm-algo-92",
-            () => new Gmw3110_2010_Generic(new E38Algorithm(),
+            () => new Gmw3110_2010_Generic(new Gm5ByteAlgorithm(),
                                            id: "gm-algo-92"));
+        // Community-sourced 2-byte "GMLAN 0x92" cipher for E38 / E67 ECMs:
+        //   k = ~(byteSwap(seed) + 0x7D58) + 0x8001
+        // Used by non-DPS testers (HP Tuners, EFILive, jakka351 tooling) when
+        // talking to an E38 over an ExtendedDiagnosticSession ($10 03). Not the
+        // same cipher DPS uses for its 5-byte Algo 92 - see gm-algo-92 above
+        // for that path. Pick this one when the bus log shows 2-byte seed +
+        // 2-byte key against an E38.
+        Register("gm-e38",
+            () => new Gmw3110_2010_Generic(new E38Algorithm(),
+                                           id: "gm-e38"));
         // GM algorithm number not yet documented for T43 - rename to gm-algo-NN
         // once a TCM utility-file `27 NN` byte sequence or vendor doc confirms it.
         // (Searched Interpreters_September_01_2009.docx and the 2011 DPS Programmers
@@ -32,6 +57,12 @@ public static class SecurityModuleRegistry
         Register("gm-programming-bypass",
             () => new Gmw3110_2010_Generic(new Gmw3110ProgrammingBypassAlgorithm(),
                                            id: "gm-programming-bypass"));
+        // Permissive variant for DPS Enhanced 5-byte utility files whose
+        // algorithm password we haven't captured yet. Emits a real non-zero
+        // 5-byte seed, accepts any key. Useful for new families on first
+        // contact and for tests that want to bypass verification.
+        Register("gm-permissive-5byte",
+            () => new Gmw3110Permissive5Byte());
     }
 
     public static void Register(string id, Func<ISecurityAccessModule> factory)

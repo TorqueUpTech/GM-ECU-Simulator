@@ -25,13 +25,12 @@ public partial class MainWindow : Window
     // Marked volatile so the read sees the last write without a lock.
     private static volatile bool logTraffic;
 
-    // Per-channel gates for the FILE log (independent of the UI textbox).
+    // Per-stream gates for the FILE log live on BusLogger.IncludeJ2534 /
+    // IncludeCan / IncludeSim (set via SetInclude*FileLog forwarders).
     // True by default so a fresh install captures everything; the Log menu's
-    // "Include J2534 calls" / "Include bus traffic" checkboxes can selectively
-    // suppress one stream if the user only cares about the other. Volatile
-    // because they're read on the IPC + scheduler threads.
-    private static volatile bool includeJ2534FileLog = true;
-    private static volatile bool includeBusFileLog = true;
+    // checkboxes can selectively suppress one stream. SIM diagnostics
+    // currently share the J2534 gate since the existing menu only exposes
+    // J2534 / bus; add a third gate when the user asks for it.
 
     // UI-only filter: when on, $3E TesterPresent requests and $7E positive
     // responses are skipped at AppendBusFrame's textbox path so the bus log
@@ -56,12 +55,15 @@ public partial class MainWindow : Window
     private const int MaxPendingAppends = 20_000;
     private const int MaxLogLines = 1000;
 
-    // File-logging sink. Writes go to a dedicated background thread; UI is
-    // never touched. Independent of the "Log traffic" textbox gate - the
-    // user can have UI logging off (for performance during a download) and
-    // file logging on, capturing every frame to disk for later analysis.
-    private static readonly FileLogSink fileLog = new();
-    public static FileLogSink FileLog => fileLog;
+    // Unified file-logging sink. Wraps a FileLogSink and owns the
+    // "[HH:mm:ss.fff],[TAG],<content>" line format. Writes go to a dedicated
+    // background thread; UI is never touched. Independent of the "Log
+    // traffic" textbox gate - the user can have UI logging off (for
+    // performance during a download) and file logging on, capturing every
+    // frame to disk for later analysis. AppendJ2534Log / AppendSimLog /
+    // AppendBusFrame route through it via WriteJ2534 / WriteSim / WriteCan.
+    private static readonly BusLogger busLogger = new();
+    public static BusLogger BusLog => busLogger;
 
     // True between OnHostSessionStarted and OnHostSessionEnded. The "Log to
     // file" menu toggle is purely a persisted preference; whether the sink
@@ -70,7 +72,7 @@ public partial class MainWindow : Window
     private static volatile bool hostSessionActive;
     public static bool IsHostSessionActive => hostSessionActive;
 
-    // Serializes the {hostSessionActive, fileLog.IsRunning} transition so the
+    // Serializes the {hostSessionActive, busLogger.IsRunning} transition so the
     // VM setter (UI thread) and the IPC-thread host-session callbacks can't
     // race into a double-Start or a Start-on-the-tail-of-a-Stop.
     private static readonly object fileLogLifecycleLock = new();
@@ -209,45 +211,45 @@ public partial class MainWindow : Window
         if (TryFindResource(key) is Geometry geom) MaxIcon.Data = geom;
     }
 
-    // General-purpose log sink. Routed to the RIGHT pane (IpcLogBox) - used
-    // for control-plane events: pipe connect/disconnect, J2534 calls received
-    // by the shim, [periodic] register/unregister diagnostics, auto-load
-    // failures, etc. Gated by the master "Log traffic" checkbox so neither
-    // pane fills up while the user isn't watching.
-    //
-    // Mirrored into DownloadLogBox on the Download tab so a user watching
-    // the programming flow doesn't have to switch tabs to see protocol traffic.
-    public static void AppendLog(string line)
+    // J2534 control-plane log sink (PassThru* IPC narration, pipe-server
+    // lifecycle, periodic register/unregister). Routed to the RIGHT pane
+    // (IpcLogBox). File path is tagged [J2534] with embedded multi-line
+    // input split into per-line entries by BusLogger.WriteJ2534.
+    public static void AppendJ2534Log(string line)
     {
-        // File sink first - independent of the textbox gate. Two gates apply:
-        // master "Log to file" (fileLog.IsRunning) AND the per-stream
-        // "Include J2534 calls" toggle from the Log menu. CSV column layout:
-        //   [timestamp],[J2534],<message>
-        // J2534 control-plane messages are free-form text - the message column
-        // is left unquoted because none of the call-site formatters emit commas.
-        if (fileLog.IsRunning && includeJ2534FileLog)
-            fileLog.Write($"[{DateTime.Now:HH:mm:ss.fff}],[J2534],{line}");
+        busLogger.WriteJ2534(line);
 
         if (!logTraffic) return;
         Append(instance?.IpcLogBox, line);
-        Append(instance?.DownloadLogBox, "[J2534] " + line);
+    }
+
+    // Sim-internal log sink (service-handler decisions, security-module
+    // state, scheduler stalls, app lifecycle). Same UI pane as the J2534
+    // sink so the user sees one merged stream; file path is tagged [SIM]
+    // so disk captures distinguish sim internals from host-driven J2534
+    // chatter.
+    public static void AppendSimLog(string line)
+    {
+        busLogger.WriteSim(line);
+
+        if (!logTraffic) return;
+        Append(instance?.IpcLogBox, line);
     }
 
     // Frame-level traffic sink → LEFT pane (LogBox). Same master gate as
-    // AppendLog - the checkbox controls both panes together. Also mirrored to
-    // the Download tab's log box.
+    // the J2534 / SIM sinks.
     //
     // Two formats arrive from VirtualBus:
     //   pretty - human-readable space-delimited line for the textbox
     //            e.g. "[chan 1] Rx 7E2 02 10 02  ; StartDiagnosticSession"
-    //   csv    - comma-separated for the file; we prefix timestamp + stream tag
+    //   csv    - comma-separated for the file; BusLogger prefixes
+    //            [timestamp],[CAN], before the disk write
     //            e.g. "[06:12:34.567],[CAN],[chan 1],Rx,7E2 02 10 02,..."
     public static void AppendBusFrame(string pretty, string csv, bool isTesterPresent)
     {
         // File-log path is unconditional - the suppress toggle is a UI-only
         // filter so disk captures stay complete and reviewable.
-        if (fileLog.IsRunning && includeBusFileLog)
-            fileLog.Write($"[{DateTime.Now:HH:mm:ss.fff}],[CAN],{csv}");
+        busLogger.WriteCan(csv);
 
         if (!logTraffic) return;
         // UI suppression: when the user has "Hide $3E" on, drop $3E requests
@@ -255,7 +257,6 @@ public partial class MainWindow : Window
         // above already ran, so the disk record still has every frame.
         if (isTesterPresent && suppressTesterPresentInWindow) return;
         Append(instance?.LogBox, pretty);
-        Append(instance?.DownloadLogBox, "[CAN]   " + pretty);
     }
 
     // Single source of truth for the "Log traffic" toggle, shared between the
@@ -263,9 +264,15 @@ public partial class MainWindow : Window
     // binding through MainViewModel.IsLoggingEnabled.
     public static void SetLogTrafficEnabled(bool enabled) => logTraffic = enabled;
 
-    // Forwarded from MainViewModel when the Log menu's two per-stream gates flip.
-    public static void SetIncludeJ2534FileLog(bool enabled) => includeJ2534FileLog = enabled;
-    public static void SetIncludeBusFileLog(bool enabled)   => includeBusFileLog = enabled;
+    // Forwarded from MainViewModel when the Log menu's per-stream gates flip.
+    // The J2534 toggle currently also gates SIM internals because the menu
+    // doesn't yet expose a separate "Include SIM diagnostics" checkbox.
+    public static void SetIncludeJ2534FileLog(bool enabled)
+    {
+        busLogger.IncludeJ2534 = enabled;
+        busLogger.IncludeSim = enabled;
+    }
+    public static void SetIncludeBusFileLog(bool enabled) => busLogger.IncludeCan = enabled;
     public static void SetSuppressTesterPresentInWindow(bool enabled)
         => suppressTesterPresentInWindow = enabled;
 
@@ -374,12 +381,11 @@ public partial class MainWindow : Window
     // goes edge-to-edge against the menu bar and side walls. Without
     // hiding those, a ~28-px gap remained at the top even with
     // EditorRow.Height=0.
-    // EditorRow.MinHeight=240 in XAML so the user can't drag the splitter
-    // up and squash the editor cards (1 form row + DataGrid 1-row floor +
-    // buttons + chrome). Maximize bypasses that floor by zeroing MinHeight
-    // here; the Unchecked path restores both. Keep this in sync with the
-    // XAML value.
-    private const double EditorMinHeightNormal = 240;
+    // EditorRow.MinHeight=140 in XAML so the user can't drag the splitter
+    // up and squash the editor card (~2 form rows + title + chrome).
+    // Maximize bypasses that floor by zeroing MinHeight here; the Unchecked
+    // path restores both. Keep this in sync with the XAML value.
+    private const double EditorMinHeightNormal = 140;
 
     private void OnMaximizeBusLogChecked(object sender, RoutedEventArgs e)
     {
@@ -403,22 +409,13 @@ public partial class MainWindow : Window
     {
         LogBox.Clear();
         IpcLogBox.Clear();
-        DownloadLogBox?.Clear();
-    }
-
-    private void OnDownloadClearLogClicked(object sender, RoutedEventArgs e)
-    {
-        DownloadLogBox?.Clear();
-        // Clear the bus log boxes too since we mirror into them.
-        LogBox.Clear();
-        IpcLogBox.Clear();
     }
 
     private void OnOpenLogFolderClicked(object sender, RoutedEventArgs e)
     {
         try
         {
-            var dir = FileLogSink.DefaultDirectory();
+            var dir = BusLogger.DefaultDirectory();
             System.IO.Directory.CreateDirectory(dir);
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
@@ -477,7 +474,6 @@ public partial class MainWindow : Window
                 ecu.RefreshSecurity(nowLong);
             }
             vm.RefreshBinReplayLive();
-            vm.DownloadWorkspace.Refresh();
             vm.RefreshFileLogStatus();
         };
         refreshTimer.Start();
@@ -495,17 +491,20 @@ public partial class MainWindow : Window
 
     public void AutoSave() => vm?.AutoSave();
 
+    public void AutoPrime(string archivePath, string? donorBinPath = null)
+        => vm?.TryAutoPrime(archivePath, donorBinPath, AppendSimLog);
+
     // Fires off the IPC worker thread (PassThruClose) or the NamedPipeServer
     // accept-loop thread (pipe-drop finally block on dirty disconnect).
-    // FileLogSink.Stop is thread-safe; the only UI-touching call is the
+    // BusLogger.Stop is thread-safe; the only UI-touching call is the
     // status-bar refresh which we marshal explicitly.
     private void OnHostSessionEnded()
     {
         lock (fileLogLifecycleLock)
         {
             hostSessionActive = false;
-            if (!fileLog.IsRunning) return;
-            fileLog.Stop();
+            if (!busLogger.IsRunning) return;
+            busLogger.Stop();
         }
         Dispatcher.BeginInvoke(() => vm?.RefreshFileLogStatus());
     }
@@ -521,17 +520,17 @@ public partial class MainWindow : Window
         {
             hostSessionActive = true;
             if (vm?.IsFileLoggingEnabled != true) return;
-            if (fileLog.IsRunning) return;
+            if (busLogger.IsRunning) return;
             try
             {
-                fileLog.Start(Core.Bus.FileLogSink.DefaultPath());
+                busLogger.Start(Core.Bus.BusLogger.DefaultPath());
             }
             catch (Exception ex)
             {
                 // Disk full / path locked / etc. Swallow so we don't crash
                 // the IPC thread; surface to the diagnostic log so the user
                 // sees why the capture didn't start.
-                AppendLog($"[file-log] auto-start on host connect failed: {ex.Message}");
+                AppendSimLog($"[file-log] auto-start on host connect failed: {ex.Message}");
             }
         }
         Dispatcher.BeginInvoke(() => vm?.RefreshFileLogStatus());
@@ -549,18 +548,18 @@ public partial class MainWindow : Window
         {
             if (!enabled)
             {
-                if (fileLog.IsRunning) fileLog.Stop();
+                if (busLogger.IsRunning) busLogger.Stop();
                 return;
             }
             if (!hostSessionActive) return;
-            if (fileLog.IsRunning) return;
+            if (busLogger.IsRunning) return;
             try
             {
-                fileLog.Start(Core.Bus.FileLogSink.DefaultPath());
+                busLogger.Start(Core.Bus.BusLogger.DefaultPath());
             }
             catch (Exception ex)
             {
-                AppendLog($"[file-log] start on toggle failed: {ex.Message}");
+                AppendSimLog($"[file-log] start on toggle failed: {ex.Message}");
             }
         }
     }

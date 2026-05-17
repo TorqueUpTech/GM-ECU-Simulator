@@ -47,9 +47,10 @@ namespace Core.Services;
 // per kernel piece; Sendbin (one $34, many $36s) produces one .bin per
 // $34-bracketed segment - matching host intent in both cases.
 //
-// We accept dataFormatIdentifier $00 only. Encryption / compression are vendor-
-// specific and out of scope for the simulator; a tester that wants to round-trip
-// a payload should use the no-compression / no-encryption form.
+// We accept dataFormatIdentifier $00 (the spec-pure no-compression / no-encryption form used by the kernel-load
+// $34) and $10 (the GM kernel-mode form DPS uses once the programming kernel is resident, where the 2-byte size
+// field carries dataBytesPerMessage rather than a total download size). True compression and encryption stay out
+// of scope - $10 is treated as a buffer-size declaration, not as "compressed payload follows".
 public static class Service34Handler
 {
     /// <summary>
@@ -77,9 +78,14 @@ public static class Service34Handler
         }
 
         byte dataFormatIdentifier = usdtPayload[1];
-        if (dataFormatIdentifier != 0x00)
+        // Accept $00 (the spec-pure "no compression, no encryption" form used for the kernel-load $34) and $10 (the
+        // GM kernel-mode form DPS sends once the bootloader-supplied programming kernel is resident). DPS uses $10
+        // with a 2-byte size field as a dataBytesPerMessage declaration, not as a total download size - the value is
+        // a per-$36-message buffer hint (typically $0FFE = 4094 bytes). Functionally the simulator handles both the
+        // same way: allocate a sink buffer at the declared size and let the $36 stream do the real work. Without
+        // this, real DPS hits NRC $12 at the post-kernel cal-block phase and bails to ReturnToNormal.
+        if (dataFormatIdentifier != 0x00 && dataFormatIdentifier != 0x10)
         {
-            // §8.12.4 NRC $12: dataFormatIdentifier value is not supported by the node.
             ServiceUtil.EnqueueNrc(node, ch, Service.RequestDownload, Nrc.SubFunctionNotSupportedInvalidFormat);
             return false;
         }
@@ -119,23 +125,13 @@ public static class Service34Handler
             return false;
         }
 
-        bool captureMode = ch.Bus?.Capture.BootloaderCaptureEnabled == true;
-        bool hasPriorData = node.State.DownloadBuffer is not null
-                            && node.State.DownloadBytesReceived > 0;
-
-        // Per-$36 capture mode: no flush-on-$34 needed. Each $36 writes its
-        // own bin immediately as it lands, so $34 is purely a precondition
-        // gate. Session timestamp is pinned by BootloaderCaptureWriter on
-        // the first $36's WriteEachTransferData call.
-        _ = captureMode;
-        _ = hasPriorData;
-
-        // Allocate a fresh sink buffer for this $34. Same path is taken on
-        // the very first $34 of a session (no prior data), on every rotate
-        // in capture mode, and on every $34 in spec mode. The address-byte
-        // count for subsequent $36s is fixed once $34 has been accepted;
-        // the spec (§8.13.2 Note 1) says all $36 to the same node use the
-        // same number of address bytes.
+        // Allocate a fresh sink buffer for this $34. Each $36 writes its own
+        // .bin immediately, so $34 is purely a precondition + buffer-reset
+        // gate. Session timestamp + sequence counter for capture filenames
+        // are pinned by BootloaderCaptureWriter on the first $36 call.
+        // The address-byte count for subsequent $36s is fixed once $34 has
+        // been accepted; the spec (§8.13.2 Note 1) says all $36 to the same
+        // node use the same number of address bytes.
         node.State.DownloadDeclaredSize = declaredSize;
         node.State.DownloadBuffer = new byte[declaredSize];
         node.State.DownloadBytesReceived = 0;

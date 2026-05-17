@@ -28,9 +28,10 @@ public sealed class VirtualBus
     public double NowMs => clock.Elapsed.TotalMilliseconds;
 
     /// <summary>
-    /// Runtime toggle for bootloader-capture mode. Off by default so
-    /// Service36Handler keeps spec-correct GMW3110 §8.13.4 NRC $31 behaviour.
-    /// The Capture Bootloader tab flips BootloaderCaptureEnabled.
+    /// Bootloader-capture configuration. Writes happen unconditionally when
+    /// <see cref="CaptureSettings.CaptureDirectory"/> is set; null disables
+    /// disk side effects (unit tests construct VirtualBus directly and
+    /// leave it null, WPF startup sets the LOCALAPPDATA path).
     /// </summary>
     public CaptureSettings Capture { get; } = new();
 
@@ -142,13 +143,22 @@ public sealed class VirtualBus
     public bool AllowPeriodicTesterPresent { get; set; } = true;
 
     /// <summary>
-    /// Always-on diagnostic sink for control-plane events (periodic message
-    /// register/unregister, channel lifecycle, anomalies). Unlike LogFrame
-    /// this is NOT gated by the "Log frame traffic" checkbox - diagnostic
-    /// events are low-volume and the user wants to see them whenever they're
-    /// debugging. Null means no logging.
+    /// Diagnostic sink for events emitted from the Shim/ project: PassThru*
+    /// IPC narration (with embedded multi-line tx[i]/rx[i] detail), pipe
+    /// connect/disconnect, periodic-message register/unregister, idle-drain
+    /// notices. Written to the file log with the [J2534] tag. Unlike
+    /// LogFrame this is NOT gated by the "Log frame traffic" checkbox.
+    /// Null means no logging.
     /// </summary>
-    public Action<string>? LogDiagnostic { get; set; }
+    public Action<string>? LogJ2534 { get; set; }
+
+    /// <summary>
+    /// Diagnostic sink for simulator-internal events: service-handler
+    /// decisions, security-module state transitions, DPID scheduler stalls,
+    /// idle-supervisor exits, capture-writer output, app lifecycle.
+    /// Written to the file log with the [SIM] tag. Null means no logging.
+    /// </summary>
+    public Action<string>? LogSim { get; set; }
 
     /// <summary>
     /// Higher-prominence sink for events the user should see at a glance -
@@ -165,8 +175,9 @@ public sealed class VirtualBus
     //           channel tag stays on the pretty line because a glance at the
     //           textbox during multi-channel debugging needs the disambiguator.
     //
-    //   csv     "<Rx|Tx>,<canId payload> [- HOST FILTERED],<annotation>"
-    //           MainWindow prepends "[timestamp],[CAN]," before the disk write.
+    //   csv     "[<Rx|Tx>],<canId payload> [- HOST FILTERED],<annotation>"
+    //           BusLogger prepends "[timestamp],[CAN]," before the disk write,
+    //           producing the 5-column shape "[time],[CAN],[Rx],<canId>,<note>".
     //           The channel column was dropped per user request: in practice all
     //           real-world traces are single-channel and the constant "[chan 1],"
     //           prefix was wasted spreadsheet width. The annotation column is
@@ -225,7 +236,7 @@ public sealed class VirtualBus
         string pretty = annotation != null
             ? $"[chan {chId}] {direction} {bytes}  ; {annotation}"
             : $"[chan {chId}] {direction} {bytes}";
-        string csv = $"{direction},{bytes},{annotation ?? ""}";
+        string csv = $"[{direction}],{bytes},{annotation ?? ""}";
         return (pretty, csv);
     }
 
@@ -338,7 +349,7 @@ public sealed class VirtualBus
             fc[CanFrame.IdBytes + 1] = bs;
             fc[CanFrame.IdBytes + 2] = st;
             ch.EnqueueRx(new PassThruMsg { ProtocolID = ProtocolID.CAN, Data = fc });
-        }, node.FlowControlBlockSize, node.FlowControlSeparationTime);
+        }, node.FlowControlBlockSize, fcSeparationTime: 0);
 
         if (assembled == null) return;
         DispatchUsdt(node, assembled, ch, isFunctional: false);
@@ -421,7 +432,7 @@ public sealed class VirtualBus
         }
         catch (Exception ex)
         {
-            LogDiagnostic?.Invoke(
+            LogSim?.Invoke(
                 $"[bus] dispatch error on ECU '{node.Name}' SID 0x{sid:X2}: {ex.GetType().Name}: {ex.Message}");
             if (!isFunctional)
             {
@@ -432,7 +443,7 @@ public sealed class VirtualBus
                 }
                 catch (Exception ex2)
                 {
-                    LogDiagnostic?.Invoke(
+                    LogSim?.Invoke(
                         $"[bus] failed to send fallback NRC for SID 0x{sid:X2}: {ex2.GetType().Name}: {ex2.Message}");
                 }
             }

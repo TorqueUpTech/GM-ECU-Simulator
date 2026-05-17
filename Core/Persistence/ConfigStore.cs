@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Common;
 using Common.Persistence;
 using Common.Protocol;
 using Common.Replay;
@@ -17,19 +18,40 @@ namespace Core.Persistence;
 // before swapping; ApplyTo replaces VirtualBus.Nodes wholesale.
 public static class ConfigStore
 {
+    private static string ConfigDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "GmEcuSimulator");
+
     /// <summary>
-    /// Default location for the auto-loaded / auto-saved config:
-    /// %LocalAppData%\GmEcuSimulator\config.json. Used when the user
-    /// hasn't picked an explicit file via File > Open.
+    /// Per-mode auto-load / auto-save path under %LocalAppData%\GmEcuSimulator\.
+    /// Each persistable mode owns its own file so DPS, Flash-Tool, and ECU
+    /// Simulator state stay separate worlds. DPS modes get a path too, but
+    /// the App lifecycle skips reading / auto-writing it - the path exists
+    /// only so manual File > Save has a target.
     /// </summary>
-    public static string DefaultPath
+    public static string PathForMode(AppMode mode)
+        => Path.Combine(ConfigDirectory, mode.ConfigFileName());
+
+    /// <summary>
+    /// One-time rename of the legacy <c>config.json</c> to the new ECU
+    /// Simulator mode filename. Runs at startup so users upgrading across
+    /// this change keep their saved ECUs without manual intervention. Skips
+    /// the rename when the target already exists (preserves whichever the
+    /// user has been writing to most recently).
+    /// </summary>
+    public static void MigrateLegacyConfigFile()
     {
-        get
+        try
         {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "GmEcuSimulator");
-            return Path.Combine(dir, "config.json");
+            var legacy = Path.Combine(ConfigDirectory, "config.json");
+            var target = PathForMode(AppMode.EcuSimulator);
+            if (File.Exists(legacy) && !File.Exists(target))
+                File.Move(legacy, target);
+        }
+        catch
+        {
+            // Migration failures are non-fatal - the user falls back to
+            // defaults and re-saves. Logging would need an injected sink.
         }
     }
 
@@ -59,7 +81,10 @@ public static class ConfigStore
         };
         foreach (var node in bus.Nodes)
         {
-            var idMap = node.Identifiers;
+            // Primed ECUs are reconstructed at startup from PrimeArchivePath;
+            // writing them to the config would persist stale static-byte dumps
+            // that the next prime would overwrite anyway.
+            if (node.IsPrimed) continue;
             cfg.Ecus.Add(new EcuDto
             {
                 Name = node.Name,
@@ -69,15 +94,10 @@ public static class ConfigStore
                 Glitch = node.Glitch,
                 SecurityModuleId = node.SecurityModule?.Id,
                 SecurityModuleConfig = node.SecurityModuleConfig,
-                BypassSecurity = node.BypassSecurity,
                 FlowControlBlockSize = node.FlowControlBlockSize,
-                FlowControlSeparationTime = node.FlowControlSeparationTime,
                 ProgrammedState = node.ProgrammedState,
-                SpsType = node.SpsType,
                 DiagnosticAddress = node.DiagnosticAddress,
-                DownloadAddressByteCount = node.DownloadAddressByteCount,
                 Pids = node.Pids.Select(PidDtoFrom).ToList(),
-                Identifiers = IdentifierDtosFrom(node),
             });
         }
         if (replay?.FilePath != null)
@@ -89,18 +109,20 @@ public static class ConfigStore
                 AutoLoadOnStart = replay.PersistedAutoLoadOnStart,
             };
         }
-        // Bootloader-capture toggle is persisted whenever it's ON, or when the
-        // user has overridden the capture directory. Default-state (off, default
-        // dir) leaves BootloaderCapture null so v1-v5 configs round-trip cleanly.
-        var defaultDir = new Bus.CaptureSettings().CaptureDirectory;
-        bool dirOverridden = !string.Equals(bus.Capture.CaptureDirectory, defaultDir,
-            StringComparison.OrdinalIgnoreCase);
-        if (bus.Capture.BootloaderCaptureEnabled || dirOverridden)
+        // Persist a CaptureDirectory override only when the user has pointed
+        // it somewhere other than WPF's default. The default is set on every
+        // launch by App.OnStartup so a null saved value still resolves to
+        // the right path next time. Pre-toggle-removal configs (which
+        // carried an Enabled flag in this section) load fine - the
+        // serialiser silently drops the now-unknown field.
+        var defaultDir = Bus.CaptureSettings.DefaultDirectory();
+        if (!string.IsNullOrEmpty(bus.Capture.CaptureDirectory)
+            && !string.Equals(bus.Capture.CaptureDirectory, defaultDir,
+                              StringComparison.OrdinalIgnoreCase))
         {
             cfg.BootloaderCapture = new BootloaderCaptureConfig
             {
-                Enabled = bus.Capture.BootloaderCaptureEnabled,
-                Directory = dirOverridden ? bus.Capture.CaptureDirectory : null,
+                Directory = bus.Capture.CaptureDirectory,
             };
         }
         return cfg;
@@ -119,14 +141,13 @@ public static class ConfigStore
 
         bus.ReplaceNodes(cfg.Ecus.Select(EcuNodeFrom));
 
-        // Restore the bootloader-capture toggle (v6+). Null leaves the bus at
-        // its constructor defaults (off, default directory), which matches the
-        // pre-v6 implicit behaviour.
-        if (cfg.BootloaderCapture is not null)
+        // Restore any user-set CaptureDirectory override. Null means "use
+        // whatever was set at startup" (WPF defaults it; tests leave it null
+        // and intentionally don't write).
+        if (cfg.BootloaderCapture is not null
+            && !string.IsNullOrWhiteSpace(cfg.BootloaderCapture.Directory))
         {
-            bus.Capture.BootloaderCaptureEnabled = cfg.BootloaderCapture.Enabled;
-            if (!string.IsNullOrWhiteSpace(cfg.BootloaderCapture.Directory))
-                bus.Capture.CaptureDirectory = cfg.BootloaderCapture.Directory!;
+            bus.Capture.CaptureDirectory = cfg.BootloaderCapture.Directory!;
         }
     }
 
@@ -140,118 +161,14 @@ public static class ConfigStore
             UudtResponseCanId = dto.UudtResponseCanId,
             Glitch = dto.Glitch ?? Common.Glitch.GlitchConfig.CreateDefault(),
             SecurityModuleConfig = dto.SecurityModuleConfig,
-            BypassSecurity = dto.BypassSecurity,
             FlowControlBlockSize = dto.FlowControlBlockSize,
-            FlowControlSeparationTime = dto.FlowControlSeparationTime,
             ProgrammedState = dto.ProgrammedState,
-            SpsType = dto.SpsType,
             DiagnosticAddress = dto.DiagnosticAddress,
-            // v1-v6 configs lack the field and deserialise it as 0; clamp to
-            // the GMW3110-permitted 2..4 range and fall back to the 4-byte
-            // default for any out-of-range value (including 0).
-            DownloadAddressByteCount = dto.DownloadAddressByteCount is >= 2 and <= 4
-                ? dto.DownloadAddressByteCount
-                : 4,
         };
         node.SecurityModule = SecurityModuleRegistry.Create(dto.SecurityModuleId);
         node.SecurityModule?.LoadConfig(dto.SecurityModuleConfig);
         foreach (var pidDto in dto.Pids) node.AddPid(PidFrom(pidDto));
-        if (dto.Identifiers != null)
-        {
-            foreach (var idDto in dto.Identifiers)
-            {
-                var bytes = IdentifierBytesFrom(idDto);
-                if (bytes.Length > 0)
-                {
-                    node.SetIdentifier(idDto.Did, bytes, idDto.Source);
-                }
-                else if (idDto.Source != Common.Protocol.DidSource.Blank)
-                {
-                    // Sticky blank: row was persisted with a source but no
-                    // bytes (e.g. user typed then deleted, or Replace-all
-                    // bin load left this row empty). Carry the source over
-                    // even though there's nothing to write to the byte map.
-                    node.SetIdentifierSource(idDto.Did, idDto.Source);
-                }
-            }
-        }
         return node;
-    }
-
-    internal static byte[] IdentifierBytesFrom(IdentifierDto dto)
-    {
-        if (dto.Ascii != null && dto.Hex != null)
-            throw new FormatException($"Identifier 0x{dto.Did:X2} has both Ascii and Hex set; pick one.");
-        if (dto.Ascii != null) return Encoding.ASCII.GetBytes(dto.Ascii);
-        if (dto.Hex != null) return ParseHexBytes(dto.Hex);
-        return Array.Empty<byte>();
-    }
-
-    /// <summary>
-    /// Builds the IdentifierDto list for an ECU, including DIDs that have a
-    /// non-Blank source even when their byte payload is empty (sticky
-    /// "user blanked this row" rows survive save / reload). Returns null when
-    /// the resulting list is empty so v1-v9 configs round-trip cleanly.
-    /// </summary>
-    internal static List<IdentifierDto>? IdentifierDtosFrom(EcuNode node)
-    {
-        var idMap = node.Identifiers;
-        var sourceMap = node.IdentifierSources;
-        var allDids = new SortedSet<byte>(idMap.Keys);
-        foreach (var kv in sourceMap)
-        {
-            if (kv.Value != Common.Protocol.DidSource.Blank)
-                allDids.Add(kv.Key);
-        }
-        if (allDids.Count == 0) return null;
-        var list = new List<IdentifierDto>(allDids.Count);
-        foreach (var did in allDids)
-        {
-            idMap.TryGetValue(did, out var bytes);
-            var source = sourceMap.TryGetValue(did, out var s) ? s : Common.Protocol.DidSource.User;
-            list.Add(IdentifierDtoFrom(did, bytes ?? Array.Empty<byte>(), source));
-        }
-        return list;
-    }
-
-    internal static IdentifierDto IdentifierDtoFrom(byte did, byte[] data, Common.Protocol.DidSource source)
-    {
-        var dto = new IdentifierDto { Did = did, Source = source };
-        if (data.Length > 0 && data.All(IsPrintableAscii))
-            dto.Ascii = Encoding.ASCII.GetString(data);
-        else if (data.Length > 0)
-            dto.Hex = FormatHexBytes(data);
-        return dto;
-    }
-
-    private static bool IsPrintableAscii(byte b) => b >= 0x20 && b < 0x7F;
-
-    private static byte[] ParseHexBytes(string s)
-    {
-        var tokens = s.Split(new[] { ' ', '\t', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-        var bytes = new byte[tokens.Length];
-        for (int i = 0; i < tokens.Length; i++)
-        {
-            var t = tokens[i];
-            if (t.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) t = t[2..];
-            else if (t.EndsWith('h') || t.EndsWith('H')) t = t[..^1];
-            if (!byte.TryParse(t, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var v))
-                throw new FormatException($"Invalid hex byte '{tokens[i]}' in identifier value");
-            bytes[i] = v;
-        }
-        return bytes;
-    }
-
-    private static string FormatHexBytes(byte[] data)
-    {
-        if (data.Length == 0) return "";
-        var sb = new StringBuilder(data.Length * 3 - 1);
-        for (int i = 0; i < data.Length; i++)
-        {
-            if (i > 0) sb.Append(' ');
-            sb.AppendFormat(CultureInfo.InvariantCulture, "{0:X2}", data[i]);
-        }
-        return sb.ToString();
     }
 
     public static Pid PidFrom(PidDto dto) => new()

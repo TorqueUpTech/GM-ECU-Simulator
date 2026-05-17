@@ -1,0 +1,217 @@
+using System.Text.Json;
+using System.Windows;
+using Core.Bus;
+using Core.Dps;
+using Core.Ecu;
+
+namespace GmEcuSimulator.ViewModels.PrimeWizard;
+
+public enum PrimeWizardStep
+{
+    Archive,
+    Phase3Review,
+    Commit,
+}
+
+// Orchestrates the three-page DPS prime wizard. Owns the shared context
+// and the per-page view models; the host window binds Back/Next/Cancel
+// to the commands here. Apply runs on the Commit page's primary button.
+//
+// Page transitions are explicit so each page's "on enter" hook can
+// rebuild downstream state when an earlier page mutated something -
+// notably page 2's manifest, which is rebuilt every time the archive
+// changes.
+public sealed class PrimeWizardViewModel : NotifyPropertyChangedBase
+{
+    private readonly VirtualBus bus;
+    private PrimeWizardStep currentStep;
+    private bool isCompleted;     // set true on successful Apply; window closes on next dispatcher tick
+
+    public PrimeWizardContext Context { get; }
+    public Page1ArchiveViewModel ArchivePage { get; }
+    public Page2Phase3ViewModel Phase3Page { get; }
+    public Page3CommitViewModel CommitPage { get; }
+
+    public RelayCommand BackCommand { get; }
+    public RelayCommand NextCommand { get; }
+    public RelayCommand CancelCommand { get; }
+    public RelayCommand ApplyCommand { get; }
+
+    public event Action? RequestClose;
+    public EcuNode? CommittedNode { get; private set; }
+    public PrimedDataset? CommittedDataset { get; private set; }
+
+    public PrimeWizardViewModel(
+        VirtualBus bus,
+        EcuNode? existingNode = null,
+        PrimeWizardContext? priorContext = null)
+    {
+        this.bus = bus;
+
+        Context = priorContext ?? new PrimeWizardContext();
+        Context.ExistingNode = existingNode;
+
+        ArchivePage = new Page1ArchiveViewModel(Context, OnContextChanged);
+        Phase3Page = new Page2Phase3ViewModel(Context, OnContextChanged);
+        CommitPage = new Page3CommitViewModel(Context);
+
+        BackCommand   = new RelayCommand(GoBack,   () => currentStep != PrimeWizardStep.Archive && !isCompleted);
+        NextCommand   = new RelayCommand(GoNext,   CanGoNext);
+        CancelCommand = new RelayCommand(Cancel);
+        ApplyCommand  = new RelayCommand(Apply,    () => currentStep == PrimeWizardStep.Commit && !isCompleted);
+
+        currentStep = PrimeWizardStep.Archive;
+
+        // Pre-populate re-edit state on construction so page 1 opens with
+        // the prior archive already selected.
+        if (Context.ArchivePath is not null)
+            ArchivePage.RestoreFromContext();
+    }
+
+    public PrimeWizardStep CurrentStep
+    {
+        get => currentStep;
+        private set
+        {
+            if (SetField(ref currentStep, value))
+            {
+                OnPropertyChanged(nameof(IsArchivePage));
+                OnPropertyChanged(nameof(IsPhase3Page));
+                OnPropertyChanged(nameof(IsCommitPage));
+                OnPropertyChanged(nameof(StepLabel));
+                OnPropertyChanged(nameof(IsApplyVisible));
+                OnPropertyChanged(nameof(IsNextVisible));
+                System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    public bool IsArchivePage  => currentStep == PrimeWizardStep.Archive;
+    public bool IsPhase3Page   => currentStep == PrimeWizardStep.Phase3Review;
+    public bool IsCommitPage   => currentStep == PrimeWizardStep.Commit;
+
+    public string StepLabel => currentStep switch
+    {
+        PrimeWizardStep.Archive       => "Step 1 of 3: Select DPS archive",
+        PrimeWizardStep.Phase3Review  => "Step 2 of 3: Review Phase 3 reads",
+        PrimeWizardStep.Commit        => "Step 3 of 3: Confirm and apply",
+        _ => "",
+    };
+
+    public string NextButtonText => "Next >";
+    public bool IsNextVisible    => currentStep != PrimeWizardStep.Commit;
+    public bool IsApplyVisible   => currentStep == PrimeWizardStep.Commit;
+
+    private bool CanGoNext() => currentStep switch
+    {
+        PrimeWizardStep.Archive      => ArchivePage.IsNextEnabled,
+        PrimeWizardStep.Phase3Review => Phase3Page.IsNextEnabled,
+        _ => false,
+    };
+
+    private void GoNext()
+    {
+        switch (currentStep)
+        {
+            case PrimeWizardStep.Archive:
+                CurrentStep = PrimeWizardStep.Phase3Review;
+                Phase3Page.OnEnter();
+                break;
+            case PrimeWizardStep.Phase3Review:
+                CurrentStep = PrimeWizardStep.Commit;
+                CommitPage.OnEnter();
+                break;
+        }
+    }
+
+    private void GoBack()
+    {
+        switch (currentStep)
+        {
+            case PrimeWizardStep.Phase3Review: CurrentStep = PrimeWizardStep.Archive; break;
+            case PrimeWizardStep.Commit:       CurrentStep = PrimeWizardStep.Phase3Review; Phase3Page.OnEnter(); break;
+        }
+    }
+
+    private void Cancel() => RequestClose?.Invoke();
+
+    private void Apply()
+    {
+        if (Context.Dataset is null) return;
+
+        var manifest = Context.EditedManifest ?? Context.Dataset.Phase3;
+        int emptyCompared = 0;
+        foreach (var row in manifest.Rows)
+            if (row.Source == Phase3RowSource.Empty && row.HasCompareDownstream)
+                emptyCompared++;
+
+        if (emptyCompared > 0)
+        {
+            var msg = $"{emptyCompared} Phase 3 read(s) with COMPARE_DATA assertions still have no value. " +
+                      $"DPS will likely abort the session at the first compare mismatch.\n\n" +
+                      $"Commit anyway?";
+            var r = MessageBox.Show(msg, "Phase 3 will likely fail",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (r != MessageBoxResult.Yes) return;
+        }
+
+        // Re-edit mode: drop the existing node first so the rebuilt one
+        // takes the same CAN ID without a clash.
+        if (Context.IsReEdit && Context.ExistingNode is not null)
+            bus.RemoveNode(Context.ExistingNode);
+
+        var reportWithOverrides = ApplySecurityOverrides(Context.Dataset.Report, Context);
+        var datasetForApply = Context.Dataset with
+        {
+            Report = reportWithOverrides,
+            EditedPhase3 = manifest,
+        };
+        var (node, dataset) = ArchivePrimer.ApplyTo(bus, datasetForApply);
+        CommittedNode = node;
+        CommittedDataset = dataset;
+        isCompleted = true;
+        RequestClose?.Invoke();
+    }
+
+    private void OnContextChanged()
+    {
+        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+    }
+
+    // Fold the wizard's per-session overrides (set on Page 3) onto the
+    // dataset's primer-derived PrimeReport. Returns a fresh report record so
+    // the caller can re-emit it via `with` on the dataset.
+    //
+    // For the fixed-seed field: serialise to a one-key { "fixedSeed": "..." }
+    // JsonElement only if the user actually typed something AND selected the
+    // gm-permissive-5byte module - the field is meaningless for any other
+    // module, and an empty entry should leave the module on its default
+    // (random seed) behaviour.
+    private static PrimeReport ApplySecurityOverrides(PrimeReport report, PrimeWizardContext ctx)
+    {
+        var moduleId = ctx.OverrideSecurityModuleId ?? report.SecurityModuleId;
+        JsonElement? config = report.SecurityModuleConfig;
+
+        if (moduleId == "gm-permissive-5byte" && !string.IsNullOrWhiteSpace(ctx.OverrideFixedSeedHex))
+        {
+            var dict = new Dictionary<string, string>
+            {
+                ["fixedSeed"] = ctx.OverrideFixedSeedHex!.Trim(),
+            };
+            config = JsonSerializer.SerializeToElement(dict);
+        }
+        else if (moduleId != "gm-permissive-5byte")
+        {
+            // Switching away from the permissive module drops its config
+            // entirely - we don't want a stale fixedSeed riding along into
+            // a module that wouldn't know what to do with it.
+            config = null;
+        }
+
+        return report with
+        {
+            SecurityModuleId = moduleId,
+            SecurityModuleConfig = config,
+        };
+    }
+}

@@ -1,18 +1,15 @@
-using Common.Persistence;
 using Common.Protocol;
 using Core.Ecu;
 using Core.Identification;
-using Core.Persistence;
 using EcuSimulator.Tests.TestHelpers;
 using Xunit;
 using static Core.Identification.BinIdentificationReader;
 
 namespace EcuSimulator.Tests.Ecu;
 
-// Per-DID provenance (DidSource) tracking. Surfaced as the "Source" column
-// in the editor's Identifiers grid - the user can see at a glance whether
-// each DID's value came from a hand-edit, the bin loader, the Auto-populate
-// default table, or has never been written.
+// Per-DID provenance (DidSource) tracking on EcuNode. Tells the Bin menu's
+// Load Info From Bin / Auto-populate writers whether they're about to
+// overwrite something the user owns.
 //
 // The sticky-user rule is the load-bearing invariant: once the user owns a
 // row, subsequent auto-populate / merge-mode bin loads must not silently
@@ -113,49 +110,6 @@ public class DidSourceTrackingTests
         // $C1 wasn't touched before; bin didn't surface it -> Bin source, blank bytes.
         Assert.Null(node.GetIdentifier(0xC1));
         Assert.Equal(DidSource.Bin, node.GetIdentifierSource(0xC1));
-    }
-
-    [Fact]
-    public void Configstore_roundtrips_source_per_identifier()
-    {
-        var node = NodeFactory.CreateNode();
-        node.SetIdentifier(0x90, new byte[] { (byte)'V', (byte)'I', (byte)'N' }, DidSource.Bin);
-        node.SetIdentifier(0x92, new byte[] { (byte)'S', (byte)'U', (byte)'P' }, DidSource.Auto);
-        node.SetIdentifier(0x99, new byte[] { (byte)'D', (byte)'A', (byte)'T' }, DidSource.User);
-        // Sticky blank: user typed then deleted - bytes gone but source remembered.
-        node.SetIdentifier(0x97, new byte[] { (byte)'X' }, DidSource.User);
-        node.RemoveIdentifier(0x97);
-
-        // Round-trip through the DTO list.
-        var dtos = ConfigStore.IdentifierDtosFrom(node);
-        Assert.NotNull(dtos);
-
-        // Build a fresh node and rehydrate via EcuNodeFrom semantics.
-        var rehydrated = NodeFactory.CreateNode();
-        foreach (var dto in dtos!)
-        {
-            var bytes = ConfigStore.IdentifierBytesFrom(dto);
-            if (bytes.Length > 0)
-                rehydrated.SetIdentifier(dto.Did, bytes, dto.Source);
-            else if (dto.Source != DidSource.Blank)
-                rehydrated.SetIdentifierSource(dto.Did, dto.Source);
-        }
-
-        Assert.Equal(DidSource.Bin,  rehydrated.GetIdentifierSource(0x90));
-        Assert.Equal(DidSource.Auto, rehydrated.GetIdentifierSource(0x92));
-        Assert.Equal(DidSource.User, rehydrated.GetIdentifierSource(0x99));
-        Assert.Equal(DidSource.User, rehydrated.GetIdentifierSource(0x97));  // sticky blank
-        Assert.Null(rehydrated.GetIdentifier(0x97));
-    }
-
-    [Fact]
-    public void Configstore_legacy_v1_v9_identifiers_default_to_user_source()
-    {
-        // v1-v9 JSON never carried a Source field; missing Source deserialises
-        // to the IdentifierDto.Source default (User). Old configs round-trip
-        // cleanly under the new tracking model.
-        var dto = new IdentifierDto { Did = 0x90, Ascii = "LEGACY-VIN" };
-        Assert.Equal(DidSource.User, dto.Source);
     }
 
     private static BinIdentification FakeBinResult(string? vin = null, string? supplierHwNumber = null)

@@ -104,6 +104,50 @@ public static class BinIdentificationReader
     }
 
     /// <summary>
+    /// True when <paramref name="bin"/> looks like the OS module unpacked from
+    /// a DPS archive (rather than a full 2 MiB flash readback). The signature
+    /// is the per-module header GM writes at the start of every OS image:
+    /// bytes 4-5 = <c>0x20 0x00</c> and bytes 14-21 are 8 ASCII digits (the
+    /// service part-number). Against random bytes the false-positive rate is
+    /// &lt; 2^-44.
+    /// </summary>
+    /// <remarks>
+    /// IMPORTANT: an archive OS module does <em>not</em> contain the boot
+    /// region (flash <c>0x000000..0x010000</c>), so the dispatcher walk in
+    /// <see cref="Parse"/> cannot anchor on it - the dispatcher lives in
+    /// boot. Use <see cref="ReadArchiveOsHeader"/> for the metadata that IS
+    /// extractable (OS part number + alpha code).
+    /// </remarks>
+    public static bool LooksLikeArchiveOsModule(ReadOnlySpan<byte> bin)
+    {
+        if (bin.Length < 22) return false;
+        if (bin[4] != 0x20 || bin[5] != 0x00) return false;
+        for (int i = 0x0E; i < 0x16; i++)
+            if (bin[i] < (byte)'0' || bin[i] > (byte)'9') return false;
+        return true;
+    }
+
+    public sealed record ArchiveOsHeader(string OsPartNumber, string AlphaCode);
+
+    /// <summary>
+    /// Pull the always-extractable fields from the per-module header at
+    /// offset 0 of an archive OS module: the 8-digit ASCII OS part number
+    /// and the 2-byte alpha code (printable ASCII when non-null bytes,
+    /// rendered as hex otherwise). Returns null if the input does not look
+    /// like an archive OS module.
+    /// </summary>
+    public static ArchiveOsHeader? ReadArchiveOsHeader(ReadOnlySpan<byte> bin)
+    {
+        if (!LooksLikeArchiveOsModule(bin)) return null;
+        string pn = Encoding.ASCII.GetString(bin.Slice(0x0E, 8));
+        byte a = bin[10], b = bin[11];
+        string alpha = (a >= 0x20 && a < 0x7F && b >= 0x20 && b < 0x7F)
+            ? $"{(char)a}{(char)b}"
+            : $"{a:X2} {b:X2}";
+        return new ArchiveOsHeader(pn, alpha);
+    }
+
+    /// <summary>
     /// Parse a GM ECU flash image. Returns null if the bin is too small or
     /// no service dispatcher can be located.
     /// </summary>

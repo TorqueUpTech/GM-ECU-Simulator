@@ -168,46 +168,15 @@ public sealed class Service1AHandlerTests
     }
 
     [Fact]
-    public void Default_ECM_serves_VIN_via_DefaultEcuConfig()
+    public void Default_ECM_carries_no_persisted_DIDs()
     {
-        // First-launch fallback must populate $1A $90 on the ECM. Catches a
-        // regression where the default config gets stripped of the VIN.
+        // v12 dropped per-ECU Identifiers from the JSON schema. The default
+        // ECM is shipped bare; DIDs are seeded at runtime via the Bin menu or
+        // Prime From Archive. This guards against accidentally re-introducing
+        // a hard-coded VIN to DefaultEcuConfig.
         var cfg = DefaultEcuConfig.Build();
         var ecm = cfg.Ecus.FirstOrDefault(e => e.Name == "ECM");
         Assert.NotNull(ecm);
-        var vin = ecm!.Identifiers?.FirstOrDefault(i => i.Did == 0x90);
-        Assert.NotNull(vin);
-        Assert.Equal(17, (vin!.Ascii?.Length ?? 0));
-    }
-
-    [Fact]
-    public void Config_round_trip_preserves_ASCII_and_Hex_identifier_values()
-    {
-        var bus = new VirtualBus();
-        var node = NodeFactory.CreateNode();
-        node.SetIdentifier(0x90, Encoding.ASCII.GetBytes("1G1ZB5ST7HF000000"));
-        node.SetIdentifier(0x99, new byte[] { 0x20, 0x26, 0x05, 0x14 });
-        bus.AddNode(node);
-
-        var snapshot = ConfigStore.Snapshot(bus);
-        var json = ConfigSerializer.Serialize(snapshot);
-        var reloaded = ConfigSerializer.Deserialize(json);
-        var newBus = new VirtualBus();
-        ConfigStore.ApplyTo(reloaded, newBus);
-
-        var rehydrated = newBus.Nodes.Single();
-        Assert.Equal(Encoding.ASCII.GetBytes("1G1ZB5ST7HF000000"), rehydrated.GetIdentifier(0x90));
-        Assert.Equal(new byte[] { 0x20, 0x26, 0x05, 0x14 }, rehydrated.GetIdentifier(0x99));
-
-        // VIN should serialise as Ascii (all printable), BCD as Hex.
-        var ecuDto = snapshot.Ecus.Single();
-        Assert.NotNull(ecuDto.Identifiers);
-        var vinDto = ecuDto.Identifiers!.Single(i => i.Did == 0x90);
-        Assert.Equal("1G1ZB5ST7HF000000", vinDto.Ascii);
-        Assert.Null(vinDto.Hex);
-        var bcdDto = ecuDto.Identifiers!.Single(i => i.Did == 0x99);
-        Assert.Null(bcdDto.Ascii);
-        Assert.Equal("20 26 05 14", bcdDto.Hex);
     }
 
     // ---------- helpers ----------

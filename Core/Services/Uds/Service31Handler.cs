@@ -111,15 +111,14 @@ public static class Service31Handler
         byte idLo = usdtPayload[3];
         ushort routineId = (ushort)((idHi << 8) | idLo);
 
-        // Capture-mode side effect: record erase region so $36 writes mirror
-        // into a consolidated flash buffer dumped at session end. The kernel's
-        // $FF00 EraseMemoryByAddress carries an 8-byte option record (BE uint32
-        // start + BE uint32 size). Other routines (e.g. $0401 CheckMemory) and
-        // other sub-functions are ignored here.
+        // Record erase region so $36 writes mirror into a consolidated flash
+        // buffer dumped at session end (when a CaptureDirectory is configured).
+        // The kernel's $FF00 EraseMemoryByAddress carries an 8-byte option
+        // record (BE uint32 start + BE uint32 size). Other routines (e.g.
+        // $0401 CheckMemory) and other sub-functions are ignored here.
         if (sub == StartRoutine
             && routineId == RoutineIdEraseMemoryByAddress
-            && usdtPayload.Length == 12
-            && ch.Bus?.Capture.BootloaderCaptureEnabled == true)
+            && usdtPayload.Length == 12)
         {
             uint start = ((uint)usdtPayload[4] << 24)
                        | ((uint)usdtPayload[5] << 16)
@@ -134,12 +133,12 @@ public static class Service31Handler
                 && (long)start + size <= 0x1_0000_0000L)
             {
                 node.State.CapturedFlashRegions.Add(new Ecu.FlashEraseRegion(start, size));
-                ch.Bus?.LogDiagnostic?.Invoke(
+                ch.Bus?.LogSim?.Invoke(
                     $"[$31 erase] region recorded: 0x{start:X8} +{size} ({size / 1024} KiB)");
             }
             else
             {
-                ch.Bus?.LogDiagnostic?.Invoke(
+                ch.Bus?.LogSim?.Invoke(
                     $"[$31 erase] rejected region 0x{start:X8} +{size}: size out of range");
                 ServiceUtil.EnqueueNrc(node, ch, sid, Nrc.RequestOutOfRange);
                 return false;
@@ -198,7 +197,7 @@ public static class Service31Handler
             {
                 int offset = (int)(start - region.StartAddress);
                 ushort crc = Crc16Ccitt.Compute(region.Buffer.AsSpan(offset, (int)size));
-                ch.Bus?.LogDiagnostic?.Invoke(
+                ch.Bus?.LogSim?.Invoke(
                     $"[$31 check] CRC ${crc:X4} over 0x{start:X8} +{size} " +
                     $"(region 0x{region.StartAddress:X8} +{region.Size}, " +
                     $"{region.BytesWritten} bytes written)");
@@ -206,7 +205,7 @@ public static class Service31Handler
             }
         }
 
-        ch.Bus?.LogDiagnostic?.Invoke(
+        ch.Bus?.LogSim?.Invoke(
             $"[$31 check] CRC fallback to $0000: no captured flash region covers " +
             $"0x{start:X8} +{size}. Enable 'Capture bootloader' so $31 $FF00 erase " +
             "records the region and $36 mirrors writes into it.");

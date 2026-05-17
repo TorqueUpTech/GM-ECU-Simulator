@@ -177,7 +177,7 @@ public sealed class NamedPipeServer : IAsyncDisposable
                     var (respType, respPayload) = dispatcher.Dispatch(msgType, payload);
                     long dispatchMs = dispatchTimer.ElapsedMilliseconds;
                     if (msgType != IpcMessageTypes.ReadMsgsRequest && dispatchMs > 300)
-                        bus.LogDiagnostic?.Invoke(
+                        bus.LogJ2534?.Invoke(
                             $"[stall-ipc] dispatch type=0x{msgType:X2} took {dispatchMs} ms");
 
                     await FrameTransport.WriteFrameAsync(pipe, respType, respPayload, ct).ConfigureAwait(false);

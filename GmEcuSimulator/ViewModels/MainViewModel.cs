@@ -4,11 +4,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Windows;
+using Common;
 using Common.Persistence;
 using Core.Bus;
+using Core.Dps;
 using Core.Ecu;
 using Core.Persistence;
 using Core.Replay;
+using GmEcuSimulator.Views;
 using Microsoft.Win32;
 using Shim;
 using Shim.Ipc;
@@ -33,6 +36,13 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     private string statusText = "Ready";
     private bool j2534Busy;
 
+    // Set when the user has primed the simulator from a DPS archive; persisted
+    // through ConfigSchema.PrimeArchivePath so the auto-load path picks it up
+    // on the next launch. Null = not primed.
+    private string? primeArchivePath;
+    private string? donorBinPath;
+    private PrimedDataset? primedDataset;
+
     // Per-user UI preferences loaded from %LOCALAPPDATA%\GmEcuSimulator\settings.json.
     // Each Log-menu checkbox setter writes back through SaveAppSettings() so the
     // user's choices survive across restarts.
@@ -44,7 +54,6 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     private SimulatorConfig? priorSnapshot;
 
     public BinReplayViewModel BinReplay { get; }
-    public DownloadWorkspaceViewModel DownloadWorkspace { get; }
     public CaptureBootloaderViewModel CaptureBootloader { get; }
 
     public RelayCommand NewCommand { get; }
@@ -55,32 +64,46 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public RelayCommand ExportCommand { get; }
     public RelayCommand AddEcuCommand { get; }
     public RelayCommand RemoveEcuCommand { get; }
-    public RelayCommand LoadEcuFromBinCommand { get; }
     public RelayCommand AddPidCommand { get; }
     public RelayCommand RemovePidCommand { get; }
     public RelayCommand AddSetupPidCommand { get; }
     public RelayCommand RemoveSetupPidCommand { get; }
     public RelayCommand OpenSetupWindowCommand { get; }
-    public RelayCommand ResetSecurityCommand { get; }
+    public RelayCommand ResetStateCommand { get; }
     public RelayCommand RegisterJ2534Command { get; }
     public RelayCommand UnregisterJ2534Command { get; }
     public RelayCommand ShowRegisteredDevicesCommand { get; }
     public RelayCommand ResetIpcPipeCommand { get; }
+    public RelayCommand PrimeFromArchiveCommand { get; }
+    public RelayCommand ClearPrimeArchiveCommand { get; }
+
+    /// <summary>
+    /// All five top-level modes in declaration order. Bound to the mode
+    /// selector ComboBox at the top of the main window.
+    /// </summary>
+    public IReadOnlyList<AppMode> AvailableModes { get; } = new[]
+    {
+        AppMode.EcuSimulator,
+        AppMode.DpsWrite,
+        AppMode.DpsRead,
+        AppMode.FlashToolWrite,
+        AppMode.FlashToolRead,
+    };
 
     public MainViewModel(VirtualBus bus, BinReplayCoordinator replay, NamedPipeServer pipeServer)
     {
         this.bus = bus;
         this.replay = replay;
         this.pipeServer = pipeServer;
+
         BinReplay = new BinReplayViewModel(replay, bus, OnBinReplayLoad, OnBinReplayUnload);
-        DownloadWorkspace = new DownloadWorkspaceViewModel(bus.Scheduler);
         CaptureBootloader = new CaptureBootloaderViewModel(bus.Capture);
-        Rebuild();
 
         // Hydrate UI preferences. The setters fan out to the static gates in
         // MainWindow + bus.AnnotateFrames so behaviour matches the persisted
         // choices before any frame flows.
         appSettings = AppSettings.Load();
+        currentMode                  = appSettings.Mode;
         logIncludeJ2534Calls         = appSettings.LogIncludeJ2534Calls;
         logIncludeBusTraffic         = appSettings.LogIncludeBusTraffic;
         logAppendDescriptionTag      = appSettings.LogAppendDescriptionTag;
@@ -97,25 +120,30 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         // actually starts if the user had the toggle on at last shutdown.
         IsFileLoggingEnabled = appSettings.LogToFile;
 
+        // Rebuild after currentMode is set so ECUs inherit the right
+        // visibility flags from the get-go.
+        Rebuild();
+
         NewCommand                   = new RelayCommand(New);
         OpenCommand                  = new RelayCommand(Open);
         SaveCommand                  = new RelayCommand(Save);
         SaveAsCommand                = new RelayCommand(SaveAs);
         ImportCommand                = new RelayCommand(Import);
         ExportCommand                = new RelayCommand(Export);
-        AddEcuCommand                = new RelayCommand(AddEcu);
+        AddEcuCommand                = new RelayCommand(AddEcu, CanAddEcu);
         RemoveEcuCommand             = new RelayCommand(RemoveEcu, () => SelectedEcu != null);
-        LoadEcuFromBinCommand        = new RelayCommand(LoadEcuFromBin, () => SelectedEcu != null);
         AddPidCommand                = new RelayCommand(AddPid,    () => SelectedEcu != null);
         RemovePidCommand             = new RelayCommand(RemovePid, () => SelectedEcu?.SelectedPid != null);
         AddSetupPidCommand           = new RelayCommand(AddSetupPid,    () => SetupSelectedEcu != null);
         RemoveSetupPidCommand        = new RelayCommand(RemoveSetupPid, () => SetupSelectedEcu?.SelectedPid != null);
         OpenSetupWindowCommand       = new RelayCommand(OpenSetupWindow);
-        ResetSecurityCommand         = new RelayCommand(ResetSecurity, () => Ecus.Count > 0);
+        ResetStateCommand            = new RelayCommand(ResetState, () => Ecus.Count > 0);
         RegisterJ2534Command         = new RelayCommand(RegisterJ2534,         () => !j2534Busy);
         UnregisterJ2534Command       = new RelayCommand(UnregisterJ2534,       () => !j2534Busy);
         ShowRegisteredDevicesCommand = new RelayCommand(ShowRegisteredDevices, () => !j2534Busy);
         ResetIpcPipeCommand           = new RelayCommand(ResetIpcPipe,          () => !j2534Busy);
+        PrimeFromArchiveCommand       = new RelayCommand(PrimeFromArchive);
+        ClearPrimeArchiveCommand      = new RelayCommand(ClearPrimeArchive, () => !string.IsNullOrEmpty(primeArchivePath));
 
         RefreshJ2534Status();
     }
@@ -123,11 +151,191 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public EcuViewModel? SelectedEcu
     {
         get => selectedEcu;
+        set => SetField(ref selectedEcu, value);
+    }
+
+    // ---------------- Global mode ----------------
+
+    private AppMode currentMode;
+
+    /// <summary>
+    /// Top-level operational mode. Bound two-way to the mode selector
+    /// ComboBox above the menu. Setter delegates to <see cref="ChangeMode"/>
+    /// so the dialog + ECU clear + per-mode config swap all run together.
+    /// Cancelling the dialog restores the prior selection via this setter.
+    /// </summary>
+    public AppMode CurrentMode
+    {
+        get => currentMode;
         set
         {
-            if (SetField(ref selectedEcu, value))
-                DownloadWorkspace.Ecu = value;
+            if (currentMode == value) return;
+            // Suppress reentrancy while we may snap the value back on cancel.
+            if (modeSwitchInProgress) return;
+            if (!ChangeMode(value))
+            {
+                modeSwitchInProgress = true;
+                try { OnPropertyChanged(); } // notify so the ComboBox refreshes
+                finally { modeSwitchInProgress = false; }
+                return;
+            }
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(WindowTitle));
         }
+    }
+
+    private bool modeSwitchInProgress;
+
+    private bool CanAddEcu()
+        => currentMode.AllowsMultipleEcus() || Ecus.Count == 0;
+
+    /// <summary>
+    /// Drives the mode transition: optionally save current state, clear the
+    /// bus, persist the new mode, then load the new mode's config (if any).
+    /// Returns false when the user cancels - the caller restores the
+    /// previous selection in the bound control.
+    /// </summary>
+    private bool ChangeMode(AppMode newMode)
+    {
+        var oldMode = currentMode;
+        bool hasEcus = Ecus.Count > 0;
+
+        if (hasEcus)
+        {
+            // Themed prompts use closures to capture the user's decision.
+            // ThemedMessageBox is modal (ShowDialog) so it blocks until the
+            // user clicks something; we then inspect the local 'proceed'
+            // flag to decide whether to continue with the mode switch.
+            var owner = Application.Current?.MainWindow;
+            bool proceed = false;
+
+            if (oldMode.PersistsConfig())
+            {
+                ThemedMessageBox.Show(
+                    owner,
+                    "Change mode",
+                    $"Switching from {oldMode.DisplayName()} to {newMode.DisplayName()} will clear " +
+                    "the current ECU set.\n\nSave the current configuration first?",
+                    MessageBoxImage.Question,
+                    new ThemedDialogButton(
+                        "Cancel",
+                        isCancel: true),
+                    new ThemedDialogButton(
+                        "Discard",
+                        onClick: () => proceed = true),
+                    new ThemedDialogButton(
+                        "Save As...",
+                        onClick: () =>
+                        {
+                            var dlg = new SaveFileDialog
+                            {
+                                Filter = "JSON config (*.json)|*.json",
+                                FileName = oldMode.ConfigFileName(),
+                            };
+                            if (dlg.ShowDialog() != true) return;
+                            try
+                            {
+                                ConfigStore.Save(SnapshotForSave(), dlg.FileName);
+                                proceed = true;
+                            }
+                            catch (Exception ex) { Error("Save failed", ex); }
+                        }),
+                    new ThemedDialogButton(
+                        "Save & Switch",
+                        onClick: () =>
+                        {
+                            try
+                            {
+                                ConfigStore.Save(SnapshotForSave(), ConfigStore.PathForMode(oldMode));
+                                proceed = true;
+                            }
+                            catch (Exception ex) { Error("Save failed", ex); }
+                        },
+                        isDefault: true,
+                        primary: true));
+            }
+            else
+            {
+                ThemedMessageBox.Show(
+                    owner,
+                    "Change mode",
+                    $"Switching from {oldMode.DisplayName()} will clear the current ECU. " +
+                    $"{oldMode.DisplayName()} state is not persisted - continue?",
+                    MessageBoxImage.Warning,
+                    new ThemedDialogButton(
+                        "Cancel",
+                        isCancel: true),
+                    new ThemedDialogButton(
+                        "Continue",
+                        onClick: () => proceed = true,
+                        isDefault: true,
+                        primary: true));
+            }
+
+            if (!proceed) return false;
+        }
+        else if (oldMode.PersistsConfig())
+        {
+            // No ECUs but we're leaving a persistable mode - silently save so
+            // the empty-bus state survives the round trip. Without this the
+            // on-disk file still carries whatever was there before the user
+            // deleted everything, and coming back to the mode would resurrect
+            // the deleted ECUs from disk.
+            try { ConfigStore.Save(SnapshotForSave(), ConfigStore.PathForMode(oldMode)); }
+            catch (Exception ex) { Error("Save failed", ex); return false; }
+        }
+
+        // Drop the current ECU set and any prime / bin-replay snapshot tied
+        // to the old mode. Each transition starts the new mode from a clean
+        // bus so the user sees nothing from the previous workflow.
+        bus.ReplaceNodes(Array.Empty<EcuNode>());
+        priorSnapshot = null;
+        PrimeArchivePath = null;
+        donorBinPath = null;
+        PrimedDataset = null;
+
+        currentMode = newMode;
+        appSettings.Mode = newMode;
+        try { appSettings.Save(); } catch { /* persistence best-effort */ }
+
+        // Load the new mode's config if it persists and a file is present.
+        try
+        {
+            if (newMode.PersistsConfig())
+            {
+                var path = ConfigStore.PathForMode(newMode);
+                if (File.Exists(path))
+                {
+                    var cfg = ConfigStore.Load(path);
+                    ConfigStore.ApplyTo(cfg, bus);
+                    // Priming is DPS-only. If a persisted non-DPS config carries
+                    // a stale primeArchivePath (e.g. from a pre-gating session
+                    // where a user primed into ECU Simulator mode), drop it on
+                    // load so the next save scrubs the field from disk.
+                    bool canPrime = newMode is AppMode.DpsWrite or AppMode.DpsRead;
+                    PrimeArchivePath = canPrime ? cfg.PrimeArchivePath : null;
+                    donorBinPath     = canPrime ? cfg.DonorBinPath     : null;
+                }
+                else if (newMode == AppMode.EcuSimulator)
+                {
+                    DefaultEcuConfig.ApplyIfEmpty(bus);
+                }
+            }
+        }
+        catch (Exception ex) { Error("Load failed", ex); }
+
+        Rebuild();
+        StatusText = $"Mode: {newMode.DisplayName()}";
+        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+        return true;
+    }
+
+    private SimulatorConfig SnapshotForSave()
+    {
+        var cfg = priorSnapshot ?? ConfigStore.Snapshot(bus, replay: replay);
+        cfg.PrimeArchivePath = PrimeArchivePath;
+        cfg.DonorBinPath = donorBinPath;
+        return cfg;
     }
 
     // Independent ECU selection for the setup window's PID/waveform panes.
@@ -142,7 +350,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
 
     // Two-way bound by both Log-traffic checkboxes (Bus log tab + Download tab)
     // so toggling either pane stays in sync. Setter forwards to the static
-    // gate inside MainWindow that AppendLog / AppendBusFrame consult on every
+    // gate inside MainWindow that AppendJ2534Log / AppendSimLog / AppendBusFrame consult on every
     // append.
     private bool isLoggingEnabled;
     public bool IsLoggingEnabled
@@ -313,7 +521,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     {
         get
         {
-            var sink = MainWindow.FileLog;
+            var sink = MainWindow.BusLog;
             if (sink.IsRunning)
             {
                 double kb = sink.BytesWritten / 1024.0;
@@ -360,12 +568,50 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public void Rebuild()
     {
         Ecus.Clear();
-        foreach (var node in bus.Nodes) Ecus.Add(new EcuViewModel(node));
+        foreach (var node in bus.Nodes)
+        {
+            var vm = new EcuViewModel(node);
+            vm.BindBus(bus);
+            Ecus.Add(vm);
+        }
         SelectedEcu = Ecus.FirstOrDefault();
         SetupSelectedEcu = Ecus.FirstOrDefault();
-        bypassAllSecurity = Ecus.Count > 0 && Ecus.All(e => e.BypassSecurity);
-        OnPropertyChanged(nameof(BypassAllSecurity));
+        OnPropertyChanged(nameof(ShowsBinReplayTab));
+        OnPropertyChanged(nameof(ShowsGlitchTab));
+        OnPropertyChanged(nameof(ShowsBootloaderTab));
+        OnPropertyChanged(nameof(ShowsPrimeMenu));
+        OnPropertyChanged(nameof(ShowsSecurityModuleField));
+        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
     }
+
+    /// <summary>Bin Replay tab is ECU-Simulator-only.</summary>
+    public bool ShowsBinReplayTab => currentMode == AppMode.EcuSimulator;
+    /// <summary>Glitch tab is ECU-Simulator-only.</summary>
+    public bool ShowsGlitchTab    => currentMode == AppMode.EcuSimulator;
+    /// <summary>Bootloader tab shows in DPS and Flash Tool modes.</summary>
+    public bool ShowsBootloaderTab
+        => currentMode is AppMode.DpsWrite or AppMode.DpsRead
+                       or AppMode.FlashToolWrite or AppMode.FlashToolRead;
+    /// <summary>
+    /// Prime menu (Prime from DPS archive / Clear primed archive) is DPS-only.
+    /// Priming creates a persona at $7E0 from a DPS programming archive, which
+    /// only makes sense in a single-ECU DPS session - never in the multi-ECU
+    /// editor (ECU Simulator) or in Flash Tool readback modes. Hiding the menu
+    /// in those modes prevents a stray prime from corrupting the persisted
+    /// config file with a path that would resurrect a "removed" ECU on next
+    /// launch.
+    /// </summary>
+    public bool ShowsPrimeMenu
+        => currentMode is AppMode.DpsWrite or AppMode.DpsRead;
+
+    /// <summary>
+    /// Per-ECU security-module dropdown in the inspector. Hidden in DPS modes
+    /// because the security module is owned by the Prime Wizard there (chosen
+    /// from the archive's algo metadata, edited on Page 3), and the inspector
+    /// dropdown would let the user clobber that choice mid-session.
+    /// </summary>
+    public bool ShowsSecurityModuleField
+        => currentMode is not (AppMode.DpsWrite or AppMode.DpsRead);
 
     private void New()
     {
@@ -385,6 +631,12 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             ConfigStore.ApplyTo(cfg, bus);
             Rebuild();
             CurrentFilePath = dlg.FileName;
+            // Restore PrimeArchivePath. Skip applying it inline - the user's
+            // explicit Open should replace the bus, not stack a prime on top.
+            // Auto-apply belongs to App.OnStartup.
+            PrimeArchivePath = cfg.PrimeArchivePath;
+            donorBinPath = cfg.DonorBinPath;
+            PrimedDataset = null;
             StatusText = $"Loaded {Ecus.Count} ECU(s) from {dlg.FileName}";
         }
         catch (Exception ex) { Error("Open failed", ex); }
@@ -395,7 +647,10 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         if (string.IsNullOrEmpty(CurrentFilePath)) { SaveAs(); return; }
         try
         {
-            ConfigStore.Save(ConfigStore.Snapshot(bus), CurrentFilePath);
+            var cfg = ConfigStore.Snapshot(bus);
+            cfg.PrimeArchivePath = PrimeArchivePath;
+            cfg.DonorBinPath = donorBinPath;
+            ConfigStore.Save(cfg, CurrentFilePath);
             StatusText = $"Saved to {CurrentFilePath}";
         }
         catch (Exception ex) { Error("Save failed", ex); }
@@ -406,12 +661,15 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         var dlg = new SaveFileDialog
         {
             Filter = "JSON config (*.json)|*.json",
-            FileName = "ecu_config.json",
+            FileName = currentMode.ConfigFileName(),
         };
         if (dlg.ShowDialog() != true) return;
         try
         {
-            ConfigStore.Save(ConfigStore.Snapshot(bus), dlg.FileName);
+            var cfg = ConfigStore.Snapshot(bus);
+            cfg.PrimeArchivePath = PrimeArchivePath;
+            cfg.DonorBinPath = donorBinPath;
+            ConfigStore.Save(cfg, dlg.FileName);
             CurrentFilePath = dlg.FileName;
             StatusText = $"Saved to {dlg.FileName}";
         }
@@ -453,6 +711,18 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
 
     private void AddEcu()
     {
+        // Single-ECU modes refuse the second add at the CanExecute layer;
+        // this guard catches a programmatic invocation that bypassed it.
+        if (!CanAddEcu()) return;
+
+        // DPS modes don't add blank ECUs - the only path that yields a useful
+        // persona is the Prime wizard, so route Add straight into it.
+        if (currentMode is AppMode.DpsWrite or AppMode.DpsRead)
+        {
+            PrimeFromArchive();
+            return;
+        }
+
         // Pick the next OBD-II 11-bit pair: request $7E0+, USDT response
         // $7E8+ (= req + $08), UUDT response $5E8+. This is the convention
         // real GM vehicles use; GMW3110's $241/$641 examples are pedagogical.
@@ -467,10 +737,11 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         };
         bus.AddNode(node);
         var vm = new EcuViewModel(node);
-        vm.BypassSecurity = bypassAllSecurity;
+        vm.BindBus(bus);
         Ecus.Add(vm);
         SelectedEcu = vm;
         StatusText = $"Added {node.Name}";
+        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
     }
 
     private void RemoveEcu()
@@ -481,81 +752,27 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         Ecus.Remove(SelectedEcu);
         SelectedEcu = Ecus.FirstOrDefault();
         StatusText = $"Removed {name}";
-    }
-
-    // Scaffold for "ECU > Load from BIN...". Surfaces an OpenFileDialog
-    // filtered to .bin and hands the path off to the (future) extractor.
-    // The extractor itself is a TODO: it needs to locate and decode the
-    // identity DIDs already exposed on EcuViewModel:
-    //   $90 VIN                         (17 ASCII bytes)
-    //   $92 Supplier HW number          (ASCII)
-    //   $98 Supplier HW version         (ASCII)
-    //   $C1 End-model part number       (ASCII)
-    //   $C2 Base-model part number      (ASCII)
-    //   $CC ECU diagnostic address      (one hex byte)
-    // Each one round-trips through EcuNode.SetIdentifier(did, bytes), so
-    // once the bin parser knows where to look the wiring at this end is
-    // a per-DID SetIdentifier call followed by OnPropertyChanged() raises
-    // for the bound fields. Until that lands, the picker just reports the
-    // file size in the status bar so the menu wiring is exercisable.
-    private void LoadEcuFromBin()
-    {
-        if (SelectedEcu == null) return;
-        var dlg = new OpenFileDialog
-        {
-            Title = $"Load BIN into {SelectedEcu.Name}",
-            Filter = "ECU flash dump (*.bin)|*.bin|All files|*.*",
-            CheckFileExists = true,
-        };
-        if (dlg.ShowDialog() != true) return;
-
-        try
-        {
-            var info = new FileInfo(dlg.FileName);
-
-            // TODO: replace with the real DID extractor. The shape it needs:
-            //   var dids = BinDidExtractor.Extract(dlg.FileName);
-            //   foreach (var (id, bytes) in dids)
-            //       SelectedEcu.Model.SetIdentifier(id, bytes);
-            //   then raise PropertyChanged for Vin/SupplierHardwareNumber/etc.
-            // so the inspector textboxes refresh.
-
-            StatusText =
-                $"BIN picker scaffold: would extract DIDs from {info.Name} ({info.Length:N0} bytes) into {SelectedEcu.Name}";
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(ex.Message, "Load BIN", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
+        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
     }
 
     private void AddPid() => SelectedEcu?.AddPid();
     private void RemovePid() => SelectedEcu?.RemoveSelectedPid();
     private void AddSetupPid() => SetupSelectedEcu?.AddPid();
     private void RemoveSetupPid() => SetupSelectedEcu?.RemoveSelectedPid();
-    private void ResetSecurity()
+
+    /// <summary>
+    /// ECU > Reset State menu handler. Power-cycles every ECU on the bus
+    /// (spec-correct $20 ReturnToNormalMode teardown + full $27 re-lock).
+    /// Replaces the per-tab Reset buttons removed alongside the Download
+    /// and Security tabs.
+    /// </summary>
+    private void ResetState()
     {
         foreach (var ecu in Ecus)
-            ecu.ResetSecurityState();
-    }
-
-    // Global $27 bypass toggle. The Security tab exposes this as a single
-    // checkbox that applies to every ECU at once - per-ECU bypass UI is gone
-    // (the user develops one ECU at a time and asked for global semantics).
-    // Setter pushes the value to every ECU's BypassSecurity; Rebuild() and
-    // AddEcu() keep the backing field and per-ECU state aligned.
-    private bool bypassAllSecurity;
-    public bool BypassAllSecurity
-    {
-        get => bypassAllSecurity;
-        set
-        {
-            if (SetField(ref bypassAllSecurity, value))
-            {
-                foreach (var ecu in Ecus)
-                    ecu.BypassSecurity = value;
-            }
-        }
+            ecu.ResetEcuState(bus.Scheduler);
+        StatusText = Ecus.Count == 1
+            ? $"Reset state on {Ecus[0].Name}"
+            : $"Reset state on {Ecus.Count} ECU(s)";
     }
 
     // Opens (or re-focuses) the modeless setup window. Modeless so the user
@@ -623,7 +840,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             // Open the IPC pipe so hosts that just discovered us through
             // HKLM can actually connect. Start is idempotent.
             try { pipeServer.Start(); }
-            catch (Exception ex) { bus.LogDiagnostic?.Invoke($"Pipe server Start after Register failed: {ex.Message}"); }
+            catch (Exception ex) { bus.LogSim?.Invoke($"Pipe server Start after Register failed: {ex.Message}"); }
             StatusText = "Registered. Restart your J2534 host to pick up the new device.";
         }
         else if (canceled)
@@ -648,7 +865,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             // host stayed connected and kept streaming data even after the
             // registry write claimed we were gone.
             try { await pipeServer.StopAsync(); }
-            catch (Exception ex) { bus.LogDiagnostic?.Invoke($"Pipe server Stop after Unregister failed: {ex.Message}"); }
+            catch (Exception ex) { bus.LogSim?.Invoke($"Pipe server Stop after Unregister failed: {ex.Message}"); }
             StatusText = "Unregistered.";
         }
         else if (canceled)
@@ -702,12 +919,12 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         {
             StatusText = "Resetting IPC pipe…";
             try { await pipeServer.StopAsync(); }
-            catch (Exception ex) { bus.LogDiagnostic?.Invoke($"Pipe server Stop during reset failed: {ex.Message}"); }
+            catch (Exception ex) { bus.LogSim?.Invoke($"Pipe server Stop during reset failed: {ex.Message}"); }
             try { pipeServer.Start(); StatusText = "IPC pipe reset. Reconnect from your J2534 host."; }
             catch (Exception ex)
             {
                 StatusText = $"IPC pipe restart failed: {ex.Message}";
-                bus.LogDiagnostic?.Invoke($"Pipe server Start during reset failed: {ex.Message}");
+                bus.LogSim?.Invoke($"Pipe server Start during reset failed: {ex.Message}");
             }
         }
         finally
@@ -770,9 +987,11 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
 
         // Stable per-run log file. Lives under LocalAppData so an admin
         // elevation in the same user session writes back where we can read it.
+        // Co-located with the bus_*.csv files since both are user-facing
+        // captures from this user's session.
         var logDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "GmEcuSimulator", "logs");
+            "GmEcuSimulator", "bus logs");
         Directory.CreateDirectory(logDir);
         var scriptBase = Path.GetFileNameWithoutExtension(scriptPath);
         var logPath = Path.Combine(
@@ -895,16 +1114,21 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
 
     public void AutoSave()
     {
+        // DPS modes are intentionally volatile - skip the write so the next
+        // launch comes up clean. Flash-Tool and ECU Simulator persist normally.
+        if (!currentMode.PersistsConfig()) return;
         try
         {
-            var path = ConfigStore.DefaultPath;
+            var path = ConfigStore.PathForMode(currentMode);
             // While a bin is loaded the bus shows the bin-derived ECU set;
             // saving that would clobber the user's real config. Save the
-            // prior-config snapshot instead so ecu_config.json is unchanged
+            // prior-config snapshot instead so the on-disk file is unchanged
             // by a bin session.
             var cfgToSave = priorSnapshot ?? ConfigStore.Snapshot(bus, replay: replay);
             // Always carry through the current BinReplay settings.
             cfgToSave.BinReplay = ConfigStore.Snapshot(bus, replay: replay).BinReplay;
+            cfgToSave.PrimeArchivePath = PrimeArchivePath;
+            cfgToSave.DonorBinPath = donorBinPath;
             ConfigStore.Save(cfgToSave, path);
         }
         catch
@@ -970,6 +1194,116 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     }
 
     public void RefreshBinReplayLive() => BinReplay.RefreshLive();
+
+    // -------- Prime From Archive --------
+
+    public string? PrimeArchivePath
+    {
+        get => primeArchivePath;
+        private set
+        {
+            if (SetField(ref primeArchivePath, value))
+            {
+                OnPropertyChanged(nameof(PrimeArchiveDisplay));
+                System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    public PrimedDataset? PrimedDataset
+    {
+        get => primedDataset;
+        private set
+        {
+            if (SetField(ref primedDataset, value))
+                OnPropertyChanged(nameof(PrimeArchiveDisplay));
+        }
+    }
+
+    public string PrimeArchiveDisplay => PrimedDataset?.Report.OneLineSummary()
+        ?? (string.IsNullOrEmpty(PrimeArchivePath) ? "" : $"Primed (pending): {Path.GetFileName(PrimeArchivePath)}");
+
+    // Invoked by the File menu. Opens the three-page wizard which drives the
+    // entire prime flow (archive pick, Phase 3 review, commit). The wizard
+    // mutates the bus directly on Apply, so we just have to refresh UI state
+    // and capture context for re-entry via Edit prime...
+    private void PrimeFromArchive()
+    {
+        // Defense in depth: the menu item is hidden in non-DPS modes via
+        // ShowsPrimeMenu, but a stray keyboard shortcut or test harness call
+        // must also be refused.
+        if (!ShowsPrimeMenu) return;
+
+        // In single-ECU modes, a fresh prime replaces the current bus
+        // contents rather than appending. Avoids the bus accumulating
+        // multiple primed personas from successive archive picks.
+        if (!currentMode.AllowsMultipleEcus() && bus.Nodes.Count() > 0)
+            bus.ReplaceNodes(Array.Empty<EcuNode>());
+
+        var wizard = new Views.PrimeWizard.PrimeWizardWindow(bus)
+        {
+            Owner = Application.Current.MainWindow,
+        };
+        wizard.ShowDialog();
+
+        if (wizard.CommittedNode is null || wizard.CommittedDataset is null) return;
+
+        var dataset = wizard.CommittedDataset;
+        var node = wizard.CommittedNode;
+        PrimeArchivePath = wizard.Context.ArchivePath;
+        donorBinPath = null;                  // donor concept dropped
+        PrimedDataset = dataset;
+        Rebuild();
+
+        // Find the freshly-bound EcuViewModel and attach the wizard context
+        // so the per-ECU "Edit prime..." button can re-open the wizard.
+        var ecuVm = Ecus.FirstOrDefault(e => ReferenceEquals(e.Model, node));
+        if (ecuVm is not null) ecuVm.AttachPrimeContext(wizard.Context);
+
+        var reportPath = PrimeReportWriter.Write(node, dataset);
+        MainWindow.AppendSimLog($"[prime] full report: {reportPath}");
+        StatusText = $"{dataset.Report.OneLineSummary()}  |  report: {reportPath}";
+    }
+
+    private void ClearPrimeArchive()
+    {
+        PrimeArchivePath = null;
+        donorBinPath = null;
+        PrimedDataset = null;
+        StatusText = "Prime cleared";
+    }
+
+    // Re-applied by App.OnStartup if the persisted config carried an archive
+    // path. Silent on success; surfaces failure to the log only so a missing
+    // archive does not block app startup. donorPath is accepted for back-compat
+    // with older persisted configs but is ignored.
+    public void TryAutoPrime(string archivePath, string? donorPath, Action<string> log)
+    {
+        _ = donorPath;   // intentionally ignored; donor concept dropped
+        if (!File.Exists(archivePath))
+        {
+            log($"[prime] archive not found at startup: {archivePath} - clearing persisted path");
+            PrimeArchivePath = null;
+            donorBinPath = null;
+            return;
+        }
+        try
+        {
+            var (node, dataset) = ArchivePrimer.ApplyTo(bus, archivePath);
+            PrimeArchivePath = archivePath;
+            donorBinPath = null;
+            PrimedDataset = dataset;
+            Rebuild();
+            var reportPath = PrimeReportWriter.Write(node, dataset);
+            log($"[prime] {dataset.Report.OneLineSummary()}");
+            log($"[prime] full report: {reportPath}");
+            StatusText = dataset.Report.OneLineSummary();
+        }
+        catch (Exception ex)
+        {
+            log($"[prime] auto-load failed: {ex.Message}");
+        }
+    }
 
     private static void Error(string title, Exception ex)
         => MessageBox.Show(ex.Message, title, MessageBoxButton.OK, MessageBoxImage.Error);

@@ -6,18 +6,13 @@ using Core.Bus;
 
 namespace GmEcuSimulator.ViewModels;
 
-// Backs the Capture Bootloader tab. One toggle (Enabled) flips
-// CaptureSettings.BootloaderCaptureEnabled, which is the sole switch that
-// makes Service36Handler relax its §8.13.4 NRC $31 bounds check and tells
-// EcuExitLogic to dump the assembled $36 buffer to disk on session end.
-//
-// When Enabled is false the simulator is byte-for-byte spec-correct - the
-// promise the user asked for when adding this feature.
-//
-// The captured-downloads list reflects whatever's already on disk in the
-// capture directory, plus anything written this session via the bus's
-// CaptureWritten event. Refresh dispatches to the UI thread because the
-// event fires from whatever thread EcuExitLogic ran on.
+// Backs the Capture Bootloader tab. The bus always writes captured $36
+// payloads + flash regions to disk - the user-facing tab is just a
+// browser/launcher for the files. The previous Enabled checkbox was removed
+// when Service36Handler moved to unconditional address-anchoring (so the
+// old "capture off = NRC $31 on absolute addresses" branch no longer
+// exists; capture is always on, but writes only happen when a directory is
+// configured, which WPF startup unconditionally does).
 public sealed class CaptureBootloaderViewModel : NotifyPropertyChangedBase
 {
     private readonly CaptureSettings settings;
@@ -38,23 +33,7 @@ public sealed class CaptureBootloaderViewModel : NotifyPropertyChangedBase
         Refresh();
     }
 
-    public bool Enabled
-    {
-        get => settings.BootloaderCaptureEnabled;
-        set
-        {
-            if (settings.BootloaderCaptureEnabled == value) return;
-            settings.BootloaderCaptureEnabled = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(StatusText));
-        }
-    }
-
-    public string CaptureDirectory => settings.CaptureDirectory;
-
-    public string StatusText => Enabled
-        ? "Capture ON. Service36Handler bounds check relaxed; $36 buffers will be written to disk when the programming session ends."
-        : "Capture OFF. Service36Handler behaves per GMW3110 §8.13.4 (NRC $31 on out-of-range addresses); nothing is written to disk.";
+    public string CaptureDirectory => settings.CaptureDirectory ?? "(not set)";
 
     private void OnCaptureWritten(string path)
     {
@@ -71,6 +50,7 @@ public sealed class CaptureBootloaderViewModel : NotifyPropertyChangedBase
     public void Refresh()
     {
         Captures.Clear();
+        if (string.IsNullOrEmpty(settings.CaptureDirectory)) return;
         if (!Directory.Exists(settings.CaptureDirectory)) return;
         var infos = new DirectoryInfo(settings.CaptureDirectory)
             .GetFiles("*.bin")
@@ -81,6 +61,7 @@ public sealed class CaptureBootloaderViewModel : NotifyPropertyChangedBase
 
     private void OpenFolder()
     {
+        if (string.IsNullOrEmpty(settings.CaptureDirectory)) return;
         try
         {
             Directory.CreateDirectory(settings.CaptureDirectory);

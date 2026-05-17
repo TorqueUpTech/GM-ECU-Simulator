@@ -56,7 +56,7 @@ public sealed class IpcSessionState : IDisposable
             drainedTotal += before;
         }
         if (drainedTotal > 0)
-            Bus.LogDiagnostic?.Invoke($"[idle] drained {drainedTotal} stale Rx frame(s) from channel queues");
+            Bus.LogJ2534?.Invoke($"[idle] drained {drainedTotal} stale Rx frame(s) from channel queues");
     }
 
     public void Dispose()

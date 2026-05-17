@@ -23,29 +23,22 @@ public sealed class EcuNode
     public ushort UsdtResponseCanId { get; set; }
     public ushort UudtResponseCanId { get; set; }
 
-    // ISO 15765-2 Flow Control bytes emitted by this ECU's reassembler in
-    // response to an inbound First Frame. The two-byte tail of the FC frame
-    // (after the 0x30 CTS PCI byte) is `BS STmin`. Defaults are 0/0, which
-    // matches the DataLogger's expectation and the most permissive ISO-TP
-    // behaviour (send all CFs without further FC, no inter-frame delay).
+    // Set by ArchivePrimer.BuildEcuNode. Primed ECUs are live on the bus
+    // during the session but are not written to ecu_config.json - they are
+    // reconstructed at startup from the persisted PrimeArchivePath.
+    public bool IsPrimed { get; set; }
+
+    // ISO 15765-2 Flow Control BS byte emitted by this ECU's reassembler in
+    // response to an inbound First Frame. The FC tail (after the 0x30 CTS
+    // PCI byte) is `BS STmin`; STmin is hard-coded to 0 (no inter-frame
+    // delay), which is the most permissive behaviour and what every host
+    // we've tested against accepts.
     //
-    // Override per ECU to mimic real silicon: e.g. the 6Speed.T43 tester
+    // Override BS per ECU to mimic real silicon: e.g. the 6Speed.T43 tester
     // checks the FC bytes for the substring "01", so a TCM configured to
     // emit BS=1 (FC = 30 01 00) makes that pattern match and lets the
     // kernel-upload flow proceed.
     public byte FlowControlBlockSize { get; set; }
-    public byte FlowControlSeparationTime { get; set; }
-
-    // Number of bytes the host uses for the startingAddress field of $36
-    // TransferData. Spec range is 2..4; 4 matches real T43-era ECUs and is
-    // the default. Pass-through to NodeState - the runtime fast path reads
-    // it via node.State.DownloadAddressByteCount, but keeping the editable
-    // knob on EcuNode mirrors how every other per-ECU config field looks.
-    public int DownloadAddressByteCount
-    {
-        get => State.DownloadAddressByteCount;
-        set => State.DownloadAddressByteCount = value;
-    }
 
     // GMW3110-2010 §8.16 ReportProgrammedState ($A2) value returned in the
     // positive response. Defaults to 0x00 FullyProgrammed - what a normal
@@ -63,25 +56,10 @@ public sealed class EcuNode
     public byte ProgrammedState { get; set; }
 
     /// <summary>
-    /// GMW3110 §8.16 SPS classification. Default <see cref="SpsType.A"/> matches a
-    /// fully-programmed running ECU. SPS_TYPE_C activates the blank-ECU
-    /// state machine: silent until $A2 received while $28 active, then
-    /// responses go on SPS_PrimeRsp ($300 | <see cref="DiagnosticAddress"/>) and
-    /// the ECU accepts SPS_PrimeReq ($000 | DiagnosticAddress). To use type C,
-    /// set <see cref="PhysicalRequestCanId"/> = SPS_PrimeReq and
-    /// <see cref="UsdtResponseCanId"/> = SPS_PrimeRsp so the normal bus
-    /// routing reaches the ECU once it activates. GM SPS / DPS drives this
-    /// flow during "Get Controller Info" to enumerate programmable ECUs.
-    /// </summary>
-    public SpsType SpsType { get; set; } = SpsType.A;
-
-    /// <summary>
-    /// GMW3110 8-bit diagnostic address used to derive SPS_PrimeReq/Rsp when
-    /// <see cref="SpsType"/> is <see cref="SpsType.C"/>. Informational for
-    /// SPS_TYPE_A/B (their request/response IDs are already permanent). For
-    /// type C this should equal the low byte of PhysicalRequestCanId, e.g.
-    /// $11 → request $011, response $311. The UI keeps both fields editable
-    /// so users can verify the derivation rather than only see the CAN IDs.
+    /// GMW3110 8-bit diagnostic address. Returned in the $1A $B0 (Read ECU
+    /// Diagnostic Address) response as the canonical "5A B0 &lt;diag_addr&gt;" reply,
+    /// which is how testers and DPS rebuild their bus mapping matrix. Typically
+    /// equals the low byte of <see cref="PhysicalRequestCanId"/>, e.g. $11.
     /// </summary>
     public byte DiagnosticAddress { get; set; }
 
@@ -140,17 +118,6 @@ public sealed class EcuNode
     // module hot-swaps and so saving doesn't require each module to remember
     // its own config separately.
     public JsonElement? SecurityModuleConfig { get; set; }
-
-    // When true the active security module short-circuits every $27 step to
-    // a positive response: requestSeed emits all-zeros, sendKey transitions
-    // the level to unlocked, the algorithm is never invoked. Models
-    // stub-security $27 levels that exist on real hardware (HP Tuners
-    // documents T43 TCM as "no unlock service required" for tuning, which
-    // is what the 6Speed.T43 tester depends on by hardcoding key 00 00).
-    // Independent of SecurityModule selection - the module still has to be
-    // configured (i.e. not (none)) so the bypass has a wrapper to short-
-    // circuit; (none) keeps the spec-correct NRC $11.
-    public bool BypassSecurity { get; set; }
 
     /// <summary>Snapshot copy of the PID list - safe to enumerate cross-thread.</summary>
     public IReadOnlyList<Pid> Pids

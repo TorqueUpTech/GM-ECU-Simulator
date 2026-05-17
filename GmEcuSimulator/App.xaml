@@ -1,11 +1,22 @@
 <Application x:Class="GmEcuSimulator.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:GmEcuSimulator">
+             xmlns:local="clr-namespace:GmEcuSimulator"
+             xmlns:conv="clr-namespace:GmEcuSimulator.Converters">
     <Application.Resources>
-        <!-- Theme pack lives in the GMThemeManager shared library. Pack URI
-             pulls the master Theme.xaml + all merged dictionaries directly
-             out of GMThemeManager.dll's embedded BAML. -->
-        <ResourceDictionary Source="pack://application:,,,/GMThemeManager;component/Theme.xaml"/>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Theme pack lives in the GMThemeManager shared library. Pack URI
+                     pulls the master Theme.xaml + all merged dictionaries directly
+                     out of GMThemeManager.dll's embedded BAML. -->
+                <ResourceDictionary Source="pack://application:,,,/GMThemeManager;component/Theme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Globally-available converter so non-MainWindow dialogs (e.g. the
+                 prime wizard) can resolve {StaticResource BoolToVis} without
+                 having to redeclare the converter locally. MainWindow keeps its
+                 own copy too (legacy); both share the key, both behave the same. -->
+            <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        </ResourceDictionary>
     </Application.Resources>
 </Application>

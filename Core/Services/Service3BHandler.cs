@@ -129,8 +129,25 @@ public static class Service3BHandler
         byte did = usdtPayload[1];
         int dataLength = usdtPayload.Length - 2;
 
-        // §8.14.6.2 first IF: DID not supported -> $31.
-        if (!WritableDids.TryGetValue(did, out var rule))
+        // §8.14.6.2 first IF: DID not supported -> $31. A DID is "supported"
+        // if it is in the spec-defined writable table OR has been pre-registered
+        // as an identifier on this ECU (the ArchivePrimer auto-stubs DIDs that
+        // the utility-file's $1A/$3B ops touch, so this lets archive-driven
+        // round-trips - $1A $DF then $3B $DF, for example - work without
+        // hardcoding every OEM-specific DID here).
+        DidWriteRule rule;
+        if (WritableDids.TryGetValue(did, out var spec))
+        {
+            rule = spec;
+        }
+        else if (node.GetIdentifier(did) is { } existing)
+        {
+            // Inherit length from the current stored value. Security required
+            // by default for archive-driven DIDs - they show up in programming-
+            // session flows where $27 unlock is the price of entry.
+            rule = new DidWriteRule(ExpectedLength: existing.Length, RequiresSecurity: true);
+        }
+        else
         {
             ServiceUtil.EnqueueNrc(node, ch, Service.WriteDataByIdentifier, Nrc.RequestOutOfRange);
             return false;

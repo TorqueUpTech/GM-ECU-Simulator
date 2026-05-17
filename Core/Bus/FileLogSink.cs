@@ -38,11 +38,11 @@ public sealed class FileLogSink : IDisposable
     /// <summary>Cumulative lines written to the current file since Start().</summary>
     public long LinesWritten => Interlocked.Read(ref linesWritten);
 
-    /// <summary>Default directory: %LOCALAPPDATA%\GmEcuSimulator\logs.</summary>
+    /// <summary>Default directory: %LOCALAPPDATA%\GmEcuSimulator\bus logs.</summary>
     public static string DefaultDirectory()
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return Path.Combine(local, "GmEcuSimulator", "logs");
+        return Path.Combine(local, "GmEcuSimulator", "bus logs");
     }
 
     /// <summary>

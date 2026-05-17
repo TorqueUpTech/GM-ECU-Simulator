@@ -39,7 +39,7 @@ public class ChaosHostileInputTests
         var bus = new VirtualBus();
         var node = NodeFactory.CreateNodeWithGenericModule();
         // 3-byte $36 starting addresses are baked into the test payloads.
-        node.DownloadAddressByteCount = 3;
+        node.State.DownloadAddressByteCount = 3;
         bus.AddNode(node);
         var ch = new ChannelSession { Id = 1, Protocol = ProtocolID.CAN, Baud = 500_000, Bus = bus };
         return (bus, node, ch);
@@ -116,25 +116,36 @@ public class ChaosHostileInputTests
     // -----------------------------------------------------------------------
 
     [Fact]
-    public void Service36_startingAddress_near_uint_max_returns_NRC_31()
+    public void Service36_address_before_anchor_returns_NRC_31()
     {
+        // The surviving NRC $31 path under the anchor-based $36 model: a
+        // host that writes BEFORE its own first $36's address. The simulator
+        // anchors on the first address it sees and rejects backwards writes
+        // rather than silently shifting the buffer (which would mask a
+        // genuine host bug). Hostile-input variant: huge first address
+        // followed by a small second address.
         var (bus, node, ch) = SetupBus();
         GetIntoUnlockedProgrammingMode(bus, ch);
         bus.DispatchHostTx(WrapCanFrame(PhysReq, new byte[] {
-            0x05, 0x34, 0x00, 0x00, 0x10, 0x00 }), ch);    // 4 KiB buffer
+            0x05, 0x34, 0x00, 0x00, 0x10, 0x00 }), ch);    // 4 KiB declared
         ch.RxQueue.TryDequeue(out _);
 
-        // $36 sub $00, 3-byte startingAddress = $FF $FF $FE (16 MiB - 2),
-        // then 4 data bytes. uint addr 16777214; addr + 4 = 16777218 - way
-        // past the 4096-byte buffer.
+        // First $36: anchors at 0xFFFFFE. 4 data bytes land at offset 0.
         bus.DispatchHostTx(WrapCanFrame(PhysReq, new byte[] {
             0x09, 0x36, 0x00, 0xFF, 0xFF, 0xFE, 0xAA, 0xBB, 0xCC, 0xDD }), ch);
+        ch.RxQueue.TryDequeue(out _);                       // drain $76
+
+        // Second $36 at 0x000100 - before the anchor; rejected.
+        bus.DispatchHostTx(WrapCanFrame(PhysReq, new byte[] {
+            0x09, 0x36, 0x00, 0x00, 0x01, 0x00, 0xEE, 0xFF, 0x11, 0x22 }), ch);
 
         Assert.True(ch.RxQueue.TryDequeue(out var msg));
         Assert.Equal(new byte[] { 0x7F, 0x36, 0x31 }, UnwrapPayload(msg!));
 
-        // Buffer must be untouched.
-        Assert.All(node.State.DownloadBuffer!, b => Assert.Equal((byte)0, b));
+        // First write landed at offset 0; second was rejected so nothing
+        // else moved.
+        Assert.Equal(0xAA, node.State.DownloadBuffer![0]);
+        Assert.Equal(0xDD, node.State.DownloadBuffer![3]);
     }
 
     // -----------------------------------------------------------------------

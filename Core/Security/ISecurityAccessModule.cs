@@ -20,6 +20,15 @@ public interface ISecurityAccessModule
     string Id { get; }
 
     /// <summary>
+    /// Module-level view of the underlying algorithm's programming-session
+    /// policy. Surfaced to the UI so the operator can see at a glance whether
+    /// $27 will short-circuit once the ECU enters a programming session.
+    /// Defaults to <see cref="ProgrammingSessionBehavior.UnchangedAlgorithm"/>
+    /// for modules that don't wrap an <see cref="ISeedKeyAlgorithm"/>.
+    /// </summary>
+    ProgrammingSessionBehavior ProgrammingSession => ProgrammingSessionBehavior.UnchangedAlgorithm;
+
+    /// <summary>
     /// Process one $27 USDT request. The implementation must enqueue exactly
     /// one response (positive, negative, or raw) via ctx.Egress before
     /// returning, unless it intentionally stays silent (rare — typically only

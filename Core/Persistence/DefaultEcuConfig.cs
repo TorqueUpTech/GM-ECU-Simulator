@@ -34,14 +34,6 @@ public static class DefaultEcuConfig
                 PhysicalRequestCanId = 0x7E0,
                 UsdtResponseCanId = 0x7E8,
                 UudtResponseCanId = 0x5E8,
-                Identifiers = new List<IdentifierDto>
-                {
-                    // GMW3110 §8.3 / Table 145. DID $90 = VIN, 17 ASCII bytes.
-                    // Placeholder WMI 1G1 = GM USA passenger car; remaining
-                    // characters are filler so the value is recognisable as
-                    // simulator output rather than a real vehicle.
-                    new() { Did = 0x90, Name = "VIN", Ascii = "1G1ZB5ST7HF000000" },
-                },
                 Pids =
                 {
                     new PidDto
@@ -82,10 +74,6 @@ public static class DefaultEcuConfig
                 PhysicalRequestCanId = 0x7E2,
                 UsdtResponseCanId = 0x7EA,
                 UudtResponseCanId = 0x5EA,
-                Identifiers = new List<IdentifierDto>
-                {
-                    new() { Did = 0x90, Name = "VIN", Ascii = "1G1ZB5ST7HF000000" },
-                },
                 Pids =
                 {
                     new PidDto

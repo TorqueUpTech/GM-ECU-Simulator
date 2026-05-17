@@ -26,7 +26,7 @@ public class ProgrammingSequenceCanProtocolTests
         var bus = new VirtualBus();
         var node = NodeFactory.CreateNodeWithGenericModule();
         // 3-byte $36 starting addresses are baked into the test payloads.
-        node.DownloadAddressByteCount = 3;
+        node.State.DownloadAddressByteCount = 3;
         bus.AddNode(node);
 
         var ch = new ChannelSession
@@ -335,7 +335,7 @@ public class ProgrammingSequenceCanProtocolTests
         for (int i = 0; i < 50; i++) algo.SeedToReturn[i] = (byte)(0xA0 + i);
         var node = NodeFactory.CreateNodeWithGenericModule(algo);
         // 3-byte $36 starting addresses are baked into the test payloads.
-        node.DownloadAddressByteCount = 3;
+        node.State.DownloadAddressByteCount = 3;
         bus.AddNode(node);
 
         var ch = new ChannelSession

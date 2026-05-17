@@ -148,7 +148,7 @@ public sealed class DpidScheduler : IDisposable
             // glitch -> stall is downstream of DPID emission, i.e. the IPC pipe
             // write path). DO NOT remove until the root cause is identified.
             if (e.ElapsedMsDelta > 3L * periodMs)
-                bus.LogDiagnostic?.Invoke(
+                bus.LogSim?.Invoke(
                     $"[stall] DPID 0x{Dpid.Id:X2} on '{Node.Name}' fired {e.ElapsedMsDelta} ms after previous (period={periodMs} ms)");
 
             var frame = BuildUudtFrame(Node, Dpid, bus.NowMs);

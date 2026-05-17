@@ -1,0 +1,104 @@
+<UserControl x:Class="GmEcuSimulator.Views.PrimeWizard.Page2Phase3Review"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <DockPanel LastChildFill="True">
+
+        <TextBlock DockPanel.Dock="Top"
+                   TextWrapping="Wrap"
+                   Style="{StaticResource Text.Caption}"
+                   Margin="0,12,0,8">
+            DPS will perform these reads after the cal flash completes. The Value column is what the simulator will return for each read. Rows marked "bytecode" are pinned by the archive's $53 COMPARE_DATA literals - don't change them or DPS will reject the response. Fill empty rows manually, from a bin, or auto-populated.
+        </TextBlock>
+
+        <!-- Action buttons row -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button Content="Load from bin..."
+                    MinWidth="170"
+                    Padding="10,6"
+                    Margin="0,0,8,0"
+                    Command="{Binding LoadFromBinCommand}"
+                    ToolTip="Walk a donor / sibling ECU bin and fill non-bytecode rows with the walker's authentic byte sequences."/>
+            <Button Content="Auto-populate empty rows"
+                    MinWidth="200"
+                    Padding="10,6"
+                    Command="{Binding AutoPopulateCommand}"
+                    ToolTip="Fill every Empty row with a sensible default (right length, plausible shape for known DIDs)."/>
+        </StackPanel>
+
+        <Border DockPanel.Dock="Top" Margin="0,0,0,8"
+                Padding="10,6"
+                CornerRadius="3"
+                BorderBrush="{DynamicResource Border.SubtleBrush}" BorderThickness="1"
+                Background="{DynamicResource Chrome.BgBrush}"
+                Visibility="{Binding HasInfo, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding InfoMessage}" TextWrapping="Wrap"/>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Margin="0,8,0,0"
+                Padding="10,6"
+                CornerRadius="3"
+                BorderBrush="Red" BorderThickness="1"
+                Background="#22FF0000"
+                Visibility="{Binding HasEmptyCompared, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding EmptyComparedText}" Foreground="Red" FontWeight="Bold"/>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Margin="0,8,0,0"
+                Padding="10,6"
+                CornerRadius="3"
+                BorderBrush="Red" BorderThickness="1"
+                Background="#22FF0000"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="Red" TextWrapping="Wrap"/>
+        </Border>
+
+        <DataGrid ItemsSource="{Binding Rows}"
+                  AutoGenerateColumns="False"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal"
+                  RowHeaderWidth="0"
+                  SelectionMode="Single"
+                  IsReadOnly="False">
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Style.Triggers>
+                        <!-- Rows that will fail Phase 3 (Empty source + has downstream
+                             $53 compare) get a pinkish wash so they're easy to spot
+                             alongside the footer warning. -->
+                        <DataTrigger Binding="{Binding ShowWarningIcon}" Value="True">
+                            <Setter Property="Background" Value="#33FF0000"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Step"   Binding="{Binding Step}"           IsReadOnly="True" Width="60"/>
+                <DataGridTextColumn Header="Read"   Binding="{Binding DidOrPidDisplay}" IsReadOnly="True" Width="120">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="FontFamily" Value="Consolas"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Source" Binding="{Binding SourceDisplay}"  IsReadOnly="True" Width="100"/>
+                <DataGridTextColumn Header="Length" Binding="{Binding Length}"         IsReadOnly="True" Width="70"/>
+                <DataGridTextColumn Header="Value (hex, editable)"
+                                    Binding="{Binding ValueHex, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                    Width="*">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="FontFamily" Value="Consolas"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                    <DataGridTextColumn.EditingElementStyle>
+                        <Style TargetType="TextBox">
+                            <Setter Property="FontFamily" Value="Consolas"/>
+                        </Style>
+                    </DataGridTextColumn.EditingElementStyle>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</UserControl>

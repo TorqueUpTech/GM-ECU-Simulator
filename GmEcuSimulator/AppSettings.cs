@@ -1,5 +1,7 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Common;
 
 namespace GmEcuSimulator;
 
@@ -13,13 +15,13 @@ namespace GmEcuSimulator;
 // corrupt settings.json still produces a usable simulator.
 public sealed class AppSettings
 {
-    /// <summary>Master gate: when on, FileLogSink streams to a fresh bus_*.csv.</summary>
+    /// <summary>Master gate: when on, BusLogger streams to a fresh bus_*.csv.</summary>
     public bool LogToFile { get; set; }
 
-    /// <summary>When on (and LogToFile is on), AppendLog J2534 calls reach the file.</summary>
+    /// <summary>When on (and LogToFile is on), [J2534] and [SIM] tagged lines reach the file.</summary>
     public bool LogIncludeJ2534Calls { get; set; } = true;
 
-    /// <summary>When on (and LogToFile is on), AppendBusFrame CAN frames reach the file.</summary>
+    /// <summary>When on (and LogToFile is on), [CAN] frame lines reach the file.</summary>
     public bool LogIncludeBusTraffic { get; set; } = true;
 
     /// <summary>When on, every bus-frame log line is suffixed with a Gmw3110Annotator tag.</summary>
@@ -48,6 +50,32 @@ public sealed class AppSettings
     /// readability tweak for the live window.
     /// </summary>
     public bool LogSuppressTesterPresentInWindow { get; set; }
+
+    /// <summary>
+    /// Active top-level mode (DPS Write / DPS Read / Flash Tool Write / Flash
+    /// Tool Read / ECU Simulator). Drives which per-mode config file the app
+    /// loads and saves, single-ECU vs multi-ECU constraints, and which tabs /
+    /// fields are visible. Default is <see cref="AppMode.EcuSimulator"/> so
+    /// fresh installs land in the original multi-ECU behaviour.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public AppMode Mode { get; set; } = AppMode.EcuSimulator;
+
+    /// <summary>
+    /// Last directory the user picked an archive from in the DPS prime wizard.
+    /// Used as InitialDirectory for the next archive pick so the wizard opens
+    /// where you were last working instead of wherever Windows' MRU points.
+    /// Null on a fresh install or after a corrupt settings.json.
+    /// </summary>
+    public string? PrimeWizardArchiveDir { get; set; }
+
+    /// <summary>
+    /// Last directory the user picked an .bin file from for the prime
+    /// wizard's "Load from bin..." button on the Phase 3 review page.
+    /// Tracked separately from <see cref="PrimeWizardArchiveDir"/> because
+    /// archives and donor / sibling bins typically live in different folders.
+    /// </summary>
+    public string? PrimeWizardBinLoadDir { get; set; }
 
     public static string DefaultPath
     {

@@ -37,7 +37,7 @@ public class ProgrammingSequenceTests
         var node = NodeFactory.CreateNodeWithGenericModule(algo);
         // Test payloads here use 3-byte $36 starting addresses; override the
         // 4-byte default so the existing fixture data stays valid.
-        node.DownloadAddressByteCount = 3;
+        node.State.DownloadAddressByteCount = 3;
         bus.AddNode(node);
 
         var ch = new ChannelSession
@@ -250,26 +250,35 @@ public class ProgrammingSequenceTests
     }
 
     [Fact]
-    public void Service36_with_address_past_buffer_end_returns_NRC_31()
+    public void Service36_with_address_before_anchor_returns_NRC_31()
     {
-        // §8.13.4 NRC $31 ROOR: startingAddress + dataRecord exceeds buffer.
+        // Under the anchor model the surviving NRC $31 path is "host wrote
+        // before its own first $36's address". An address PAST the declared
+        // buffer is no longer an error - the simulator anchors on the first
+        // $36 and grows the buffer as needed.
         var (_, node, _, iso, _) = SetupBusAndChannel();
         SendAndReceive(iso, new byte[] { 0x28 });
         SendAndReceive(iso, new byte[] { 0xA5, 0x01 });
         SendExpectingNoResponse(iso, new byte[] { 0xA5, 0x03 });
         SendAndReceive(iso, new byte[] { 0x27, 0x01 });
         SendAndReceive(iso, new byte[] { 0x27, 0x02, 0xAB, 0xCD });
-        SendAndReceive(iso, new byte[] { 0x34, 0x00, 0x00, 0x00, 0x10 });   // 16-byte buffer
+        SendAndReceive(iso, new byte[] { 0x34, 0x00, 0x00, 0x00, 0x10 });   // 16-byte declared
 
-        // Try to write 8 bytes starting at offset 12 - that's bytes 12..19 in a
-        // 16-byte buffer, so out-of-range.
-        var req = new byte[] { 0x36, 0x00, 0x00, 0x00, 0x0C,
-                               0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22 };
+        // Fixture uses 3-byte $36 startingAddress. First $36 anchors at
+        // 0x000200 with 4 bytes of data.
+        Assert.Equal(new byte[] { 0x76 }, SendAndReceive(iso,
+            new byte[] { 0x36, 0x00, 0x00, 0x02, 0x00, 0xAA, 0xBB, 0xCC, 0xDD }));
+
+        // Second $36 at 0x000100 - before the anchor; rejected.
+        var req = new byte[] { 0x36, 0x00, 0x00, 0x01, 0x00,
+                               0xEE, 0xFF, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 };
         Assert.Equal(new byte[] { 0x7F, 0x36, 0x31 }, SendAndReceive(iso, req));
 
-        // The buffer must be untouched - the rejected $36 doesn't write partials.
+        // The first 4 bytes landed; the rejected second $36 didn't touch
+        // anything.
         Assert.NotNull(node.State.DownloadBuffer);
-        Assert.All(node.State.DownloadBuffer, b => Assert.Equal((byte)0, b));
+        Assert.Equal(0xAA, node.State.DownloadBuffer[0]);
+        Assert.Equal(0xDD, node.State.DownloadBuffer[3]);
     }
 
     [Fact]

@@ -34,16 +34,17 @@ Modern GM diagnostic stacks (Tech 2 Win, GDS, SPS) typically use ISO15765; legac
 * **`ISecurityAccessModule`** - owns a whole `$27` exchange step. The bundled `Gmw3110_2010_Generic` module covers the GMW3110-2010 protocol envelope (length validation, subfunction parity, pending-seed tracking, 3-strike lockout with 10s deadline-timestamp recovery, NRC `$12` / `$22` / `$35` / `$36` / `$37` paths).
 * **`ISeedKeyAlgorithm`** - the small strategy you usually write. \~30 lines. `Gmw3110_2010_Generic` wraps one and handles everything else.
 
-Ships with four algorithms registered out of the box, selectable per-ECU in the **Security** tab:
+Ships with five algorithms registered out of the box, selectable per-ECU in the **Security** tab:
 
 * `gmw3110-2010-not-implemented` - deterministic seed `[0x12, 0x34]`, refuses every key. Exercises every NRC path against any J2534 host without committing real algorithm math.
-* `gm-algo-92` - GMLAN algorithm `0x92`, used by both the GM E38 and E67 ECMs. 2-byte seed, 2-byte key. Optional `fixedSeed` JSON config for deterministic exchanges.
+* `gm-algo-92` - GM DPS "Algo 92" (E92-family ECMs): 5-byte seed, 5-byte key. Reverse-engineered from `sale.dll` + `sa015bcr.dll` on 2026-05-17 via a logging proxy (`tools/sa015bcr_hook/`) and verified against 7 known seed/key pairs. Defaults to the E92 password captured from DPS 4.52.2000; override with `password` / `algoId` / `familyByte` / `fixedSeed` in `SecurityModuleConfig`.
 * `gm-t43` - GM T43 TCM (6T70 family) seed/key algorithm decompiled from 6Speed.T43's `gett43key`. 2-byte seed, 2-byte key. The GM-assigned algorithm number is not yet documented; rename to `gm-algo-NN` once a TCM utility file or vendor doc confirms it.
 * `gm-programming-bypass` - permissive boot-block stub: declares `ProgrammingSessionBehavior.BypassAll` so an ECU in programming mode (after `$10 $02` or `$A5 $03`) returns seed `00 00` and accepts any key. For development / hand-built utility-file demos where real key math is out of scope.
+* `gm-permissive-5byte` - emits a real non-zero 5-byte seed, accepts any key. Use for new ECU families whose password we haven't captured yet, or tests that want to bypass verification.
 
-Each ECU also has a **Bypass security** checkbox that short-circuits `$27` entirely (seed `00 00`, any key accepted) for modelling stub-security levels seen on real hardware (e.g. T43 TCM at level 1).
+For stub-security levels seen on real hardware (e.g. T43 TCM at level 1), select the `gm-programming-bypass` module on the ECU. It short-circuits `$27` while the ECU is in a programming session (seed `00 00`, any key accepted).
 
-Each ECU's chosen module ID + module config blob persist to `ecu_config.json`. Schema is currently at version 8; v1..v7 configs still load with missing fields falling back to documented defaults (BypassSecurity = false, FC.BS / FC.STmin = 0, `$36` address byte count = 4, BootloaderCapture disabled, no security module -> `$27` returns NRC `$11`).
+Each ECU's chosen module ID + module config blob persist to `ecu_config.json`. Schema is currently at version 11; older configs still load with missing fields falling back to documented defaults (FC.BS / FC.STmin = 0, `$36` address byte count = 4, BootloaderCapture disabled, no security module -> `$27` returns NRC `$11`). The pre-v11 per-ECU `BypassSecurity` flag is silently dropped on load - users who relied on it should switch the affected ECU to `gm-programming-bypass`.
 
 See [`docs/Adding a Security Access ($27) Module.md`](<docs/Adding a Security Access (\$27) Module.md>) for a step-by-step walkthrough of writing a new algorithm, using the E38 algorithm as the worked example.
 
@@ -95,7 +96,7 @@ Either click **J2534 -> Register as J2534 device...** in the app's menu bar (UAC
 3. Press **Ctrl+Shift+P** (or **View -> Setup window\...**) to open the modeless **Setup window** for editing PIDs and waveforms. Each PID gets a waveform (or pulls from a `.bin` replay), a scalar / offset, a unit string, and a size (Byte / Word / DWord). The **Live** column shows the current synthesised value.
 4. Launch your J2534 host. "GM ECU Simulator" appears in its device dropdown. The shim is `LoadLibrary`'d into the host process and forwards every PassThru call to the simulator.
 5. The **Bus log** tab shows live CAN frames (Tx/Rx) on the left and J2534 control-plane calls (Open / Connect / Filter / ReadMsgs / ...) on the right. The **Download** tab shows the programming-flow traffic-light tree for the selected ECU. The **Bootloader** tab toggles `$36`-payload capture to disk.
-6. The **Log** menu enables a streaming file-log sink that writes to `%LOCALAPPDATA%\GmEcuSimulator\logs\bus_*.csv` on a background thread. Use this for long captures - the in-window textbox doesn't virtualise and can freeze the GUI at high message rates.
+6. The **Log** menu enables a streaming file-log sink that writes to `%LOCALAPPDATA%\GmEcuSimulator\bus logs\bus_*.csv` on a background thread. Use this for long captures - the in-window textbox doesn't virtualise and can freeze the GUI at high message rates.
 
 ![1.00](docs/screenshots/bus-log.png)
 

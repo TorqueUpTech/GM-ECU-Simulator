@@ -10,13 +10,12 @@ using Xunit;
 
 namespace EcuSimulator.Tests.IsoTp;
 
-// Coverage for the bootloader-capture mode added on top of $36. Two halves:
-//   (1) Default (capture OFF) - Service36Handler still enforces GMW3110 §8.13.4
-//       NRC $31 exactly, no .bin file is ever written. This is the "as per
-//       spec" promise the user asked for when the tab checkbox is unticked.
-//   (2) Capture ON - the same out-of-range request that fired NRC $31 in the
-//       wire log now succeeds, EcuExitLogic dumps the assembled buffer, and
-//       the file lands in the test's temp capture dir.
+// Coverage for the always-on bootloader-capture path. Service36Handler
+// anchors on the first $36's address (so real-DPS absolute-address sessions
+// work without any toggle); BootloaderCaptureWriter dumps each $36 to disk
+// whenever CaptureSettings.CaptureDirectory is set. Tests that don't set
+// the directory verify the silent no-op path (so unit-test runs don't
+// pollute the user's real captures folder).
 public class BootloaderCaptureTests
 {
     private const ushort PhysReq = NodeFactory.PhysReq;
@@ -31,7 +30,7 @@ public class BootloaderCaptureTests
         // Test payloads use a 3-byte $36 starting address (0x003FB8).
         // Override the 4-byte default so the existing fixture data stays valid;
         // T43_4ByteAddressTests covers the 4-byte path explicitly.
-        node.DownloadAddressByteCount = 3;
+        node.State.DownloadAddressByteCount = 3;
         bus.AddNode(node);
         var ch = new ChannelSession { Id = 1, Protocol = ProtocolID.ISO15765, Baud = 500_000, Bus = bus };
         var iso = new Iso15765Channel(new IsoTpTimingParameters());
@@ -81,9 +80,9 @@ public class BootloaderCaptureTests
     /// <summary>
     /// Builds the exact $36 USDT payload shape observed in the user's wire log:
     /// SID + sub $00 + 3-byte address 0x003FB8 + 1025 bytes of data, totalling
-    /// 1030 bytes. With the spec-mode bounds check this writes way past a
-    /// 5344-byte declared buffer and trips NRC $31; with capture mode the
-    /// payload lands at offset 0 of a freshly-rebased buffer and gets $76.
+    /// 1030 bytes. The anchor model treats 0x003FB8 as the base and stores the
+    /// 1025 data bytes at offset 0 - succeeding even though the address is
+    /// well outside the 5344-byte declared buffer.
     /// </summary>
     private static byte[] BuildLargeAddressTransfer()
     {
@@ -98,30 +97,15 @@ public class BootloaderCaptureTests
     }
 
     [Fact]
-    public void Capture_off_keeps_NRC_31_for_address_past_declared_size()
+    public void Absolute_address_36_anchors_and_returns_positive()
     {
-        // The "as per spec" promise when the Capture Bootloader checkbox is
-        // unticked - the same wire payload from the user's host must still
-        // get NRC $31, identical to behaviour before the capture feature.
-        var (bus, _, _, iso) = Wire();
-        Assert.False(bus.Capture.BootloaderCaptureEnabled);
+        // The bug-report scenario: a real-DPS-shaped $36 with an absolute
+        // RAM address that's way past the $34-declared buffer. Anchor
+        // mode treats the address as the base; data lands at offset 0.
+        var (_, node, _, iso) = Wire();
 
         DriveProgrammingPreconditions(iso);
         Assert.Equal(new byte[] { 0x74 }, Send(iso, [0x34, 0x00, 0x00, 0x14, 0xE0]));   // 5344 buffer
-
-        Assert.Equal(new byte[] { 0x7F, 0x36, 0x31 }, Send(iso, BuildLargeAddressTransfer()));
-    }
-
-    [Fact]
-    public void Capture_on_accepts_large_starting_address_and_returns_76()
-    {
-        // Same payload, capture toggle flipped - the handler rebases on the
-        // first $36's address and stores everything relative to it.
-        var (bus, node, _, iso) = Wire();
-        bus.Capture.BootloaderCaptureEnabled = true;
-
-        DriveProgrammingPreconditions(iso);
-        Send(iso, [0x34, 0x00, 0x00, 0x14, 0xE0]);
 
         Assert.Equal(new byte[] { 0x76 }, Send(iso, BuildLargeAddressTransfer()));
 
@@ -134,10 +118,27 @@ public class BootloaderCaptureTests
     }
 
     [Fact]
-    public void Capture_on_dumps_buffer_to_disk_on_exit_to_normal()
+    public void Address_before_anchor_returns_NRC_31()
+    {
+        // The one NRC $31 path that survives: a host that wrote BEFORE its
+        // own first $36's address. No observed GM flow does this; silently
+        // rebasing would mask a host bug.
+        var (_, _, _, iso) = Wire();
+
+        DriveProgrammingPreconditions(iso);
+        Send(iso, [0x34, 0x00, 0x00, 0x14, 0xE0]);
+
+        // First $36 anchors at 0x000200.
+        Send(iso, [0x36, 0x00, 0x00, 0x02, 0x00, 0xAA, 0xBB]);
+        // Second $36 at 0x000100 - before the anchor.
+        Assert.Equal(new byte[] { 0x7F, 0x36, 0x31 },
+            Send(iso, [0x36, 0x00, 0x00, 0x01, 0x00, 0xCC, 0xDD]));
+    }
+
+    [Fact]
+    public void Capture_directory_set_writes_a_file_per_36()
     {
         var (bus, node, _, iso) = Wire();
-        bus.Capture.BootloaderCaptureEnabled = true;
         var tmp = Path.Combine(Path.GetTempPath(), "GmEcuSimCapTest_" + Guid.NewGuid().ToString("N"));
         bus.Capture.CaptureDirectory = tmp;
         string? writtenPath = null;
@@ -149,22 +150,15 @@ public class BootloaderCaptureTests
             Send(iso, [0x34, 0x00, 0x00, 0x14, 0xE0]);
             Send(iso, BuildLargeAddressTransfer());
 
-            // $20 ReturnToNormalMode triggers EcuExitLogic, which calls the
-            // capture writer before ClearProgrammingState wipes the buffer.
-            // §8.5: concluding a programming session is silent on the wire.
-            SendNoResp(iso, [0x20]);
-
             Assert.NotNull(writtenPath);
             Assert.True(File.Exists(writtenPath));
             var bytes = File.ReadAllBytes(writtenPath!);
-            // File must contain the 1025-byte payload starting at offset 0.
-            // We allow trailing zeros (the headroom-grown buffer is dumped whole)
-            // but the first 1025 must match what we sent.
-            Assert.True(bytes.Length >= 1025);
+            // The per-$36 file contains exactly the dataRecord (1025 bytes).
+            Assert.Equal(1025, bytes.Length);
             for (int i = 0; i < 1025; i++)
                 Assert.Equal((byte)((i + 5) & 0xFF), bytes[i]);
 
-            // Filename embeds the base address and byte count for at-a-glance triage.
+            // Filename embeds the absolute address and byte count.
             string fname = Path.GetFileName(writtenPath!);
             Assert.Contains("003FB8", fname);
             Assert.Contains("1025", fname);
@@ -175,164 +169,23 @@ public class BootloaderCaptureTests
         }
     }
 
-    [Fact(Skip = "Per-$34 rotate semantics replaced by per-$36 immediate write - revisit when we decide on the final capture model.")]
-    public void Capture_on_back_to_back_34s_rotate_to_separate_files()
-    {
-        // Each $34 RequestDownload brackets one logical "download" per
-        // GMW3110 §8.12. In capture mode, the second $34 flushes the
-        // current buffer to its own .bin and starts a fresh one - so
-        // Pushspskernel-style flows ($34/$36, $34/$36) produce ONE .bin
-        // per kernel piece, not a merged image with gaps. Sendbin-style
-        // flows (one $34, many $36s) still produce one .bin per $34
-        // because there's no second $34 to trigger a rotate.
-        var (bus, node, _, iso) = Wire();
-        bus.Capture.BootloaderCaptureEnabled = true;
-        var tmp = Path.Combine(Path.GetTempPath(), "GmEcuSimCapTest_" + Guid.NewGuid().ToString("N"));
-        bus.Capture.CaptureDirectory = tmp;
-        var writtenPaths = new List<string>();
-        bus.Capture.CaptureWritten += p => writtenPaths.Add(p);
-
-        try
-        {
-            DriveProgrammingPreconditions(iso);
-
-            // First $34/$36 pair: declare 1024 bytes, write 1025. The 1025
-            // bytes received >= 1024 declared marks the first download
-            // logically complete; capture mode tolerates the overshoot via
-            // the doubling-growth path.
-            Send(iso, [0x34, 0x00, 0x04, 0x00]);
-            Send(iso, BuildLargeAddressTransfer());
-
-            // Second $34: a fresh logical transfer at a different declared
-            // size. This MUST flush the prior buffer (one .bin written) AND
-            // reset state for the new transfer: new buffer, no base address
-            // locked yet, no bytes received yet, seq incremented to 1.
-            Send(iso, [0x34, 0x00, 0x00, 0x00, 0x10]);
-            Assert.Single(writtenPaths);                                // first .bin already on disk
-            Assert.Null(node.State.DownloadCaptureBaseAddress);         // reset awaiting next $36
-            Assert.Equal(0u, node.State.DownloadBytesReceived);
-            Assert.Equal(0x10u, node.State.DownloadDeclaredSize);
-            Assert.Equal(0x10, node.State.DownloadBuffer!.Length);      // fresh allocation
-            Assert.Equal(1u, node.State.DownloadCaptureSequence);
-
-            // Second $36: writes 8 bytes at an arbitrary absolute address.
-            Send(iso, [0x36, 0x00, 0x00, 0x40, 0x00,
-                       0xCA, 0xFE, 0xBA, 0xBE, 0x01, 0x02, 0x03, 0x04]);
-
-            Assert.Equal(8u, node.State.DownloadBytesReceived);
-            Assert.Equal(0x00004000u, node.State.DownloadCaptureBaseAddress);
-
-            // $20 ends the session - second .bin gets flushed. Silent on wire
-            // per §8.5 since programming mode is active at $20 time.
-            SendNoResp(iso, [0x20]);
-
-            Assert.Equal(2, writtenPaths.Count);
-            Assert.True(File.Exists(writtenPaths[0]));
-            Assert.True(File.Exists(writtenPaths[1]));
-
-            // Files are sequenced 00 / 01 with a shared session timestamp.
-            string f0 = Path.GetFileName(writtenPaths[0]);
-            string f1 = Path.GetFileName(writtenPaths[1]);
-            Assert.Contains("_00_", f0);
-            Assert.Contains("_01_", f1);
-            // Session timestamp is the same yyyymmdd_HHmmss prefix between them.
-            string[] p0 = f0.Split('_');
-            string[] p1 = f1.Split('_');
-            Assert.Equal(p0[1] + "_" + p0[2], p1[1] + "_" + p1[2]);
-
-            // First .bin is trimmed to the high-water mark (1025 bytes), not
-            // the full doubling-growth buffer.
-            byte[] bin0 = File.ReadAllBytes(writtenPaths[0]);
-            Assert.Equal(1025, bin0.Length);
-            // Second .bin is the 8 bytes we sent.
-            byte[] bin1 = File.ReadAllBytes(writtenPaths[1]);
-            Assert.Equal(new byte[] { 0xCA, 0xFE, 0xBA, 0xBE, 0x01, 0x02, 0x03, 0x04 }, bin1);
-        }
-        finally
-        {
-            if (Directory.Exists(tmp)) Directory.Delete(tmp, recursive: true);
-        }
-    }
-
-    [Fact(Skip = "Per-$34 rotate semantics replaced by per-$36 immediate write - revisit when we decide on the final capture model.")]
-    public void Capture_on_sendbin_pattern_one_34_many_36s_produces_one_file()
-    {
-        // Sendbin-style flows: a single $34 declares the total size, then
-        // many $36s drop chunks at sequential sub-offsets. There's no
-        // second $34, so the rotate rule doesn't fire and the entire
-        // declared region ends up in ONE .bin - which is what flash-data
-        // dumps want.
-        var (bus, node, _, iso) = Wire();
-        bus.Capture.BootloaderCaptureEnabled = true;
-        var tmp = Path.Combine(Path.GetTempPath(), "GmEcuSimCapTest_" + Guid.NewGuid().ToString("N"));
-        bus.Capture.CaptureDirectory = tmp;
-        var writtenPaths = new List<string>();
-        bus.Capture.CaptureWritten += p => writtenPaths.Add(p);
-
-        try
-        {
-            DriveProgrammingPreconditions(iso);
-
-            // One $34 declaring 4 KiB total.
-            Send(iso, [0x34, 0x00, 0x10, 0x00]);
-
-            // Four $36s of 1 KiB each at sequential addresses 0x100000..0x100C00.
-            for (int chunk = 0; chunk < 4; chunk++)
-            {
-                uint addr = 0x100000u + (uint)(chunk * 0x400);
-                var req = new byte[5 + 1024];
-                req[0] = 0x36;
-                req[1] = 0x00;
-                req[2] = (byte)((addr >> 16) & 0xFF);
-                req[3] = (byte)((addr >> 8) & 0xFF);
-                req[4] = (byte)(addr & 0xFF);
-                for (int i = 0; i < 1024; i++) req[5 + i] = (byte)((chunk << 4) | (i & 0x0F));
-                Send(iso, req);
-            }
-
-            // No second $34, so no rotate fired yet.
-            Assert.Empty(writtenPaths);
-            Assert.Equal(4u * 1024u, node.State.DownloadBytesReceived);
-            Assert.Equal(0u, node.State.DownloadCaptureSequence);
-
-            // $20 ends the session - ONE file with all 4 KiB. Silent on wire
-            // per §8.5 since programming mode is active at $20 time.
-            SendNoResp(iso, [0x20]);
-
-            Assert.Single(writtenPaths);
-            byte[] bin = File.ReadAllBytes(writtenPaths[0]);
-            Assert.Equal(4 * 1024, bin.Length);
-            // Spot-check chunk boundaries: chunk 0 byte 0 = 0x00, chunk 1 byte 0 = 0x10,
-            // chunk 2 byte 0 = 0x20, chunk 3 byte 0 = 0x30.
-            Assert.Equal(0x00, bin[0]);
-            Assert.Equal(0x10, bin[1024]);
-            Assert.Equal(0x20, bin[2048]);
-            Assert.Equal(0x30, bin[3072]);
-        }
-        finally
-        {
-            if (Directory.Exists(tmp)) Directory.Delete(tmp, recursive: true);
-        }
-    }
-
     [Fact]
-    public void Capture_off_does_not_write_a_file_on_exit()
+    public void Capture_directory_unset_writes_no_files()
     {
-        // Even when a successful (spec-shape) $36 has run, capture-off must
-        // not touch the disk - the toggle is the sole opt-in.
+        // The unit-test default: CaptureDirectory is null, so no disk side
+        // effects regardless of how many $36 transfers run. Production WPF
+        // unconditionally sets the directory on startup.
         var (bus, _, _, iso) = Wire();
-        Assert.False(bus.Capture.BootloaderCaptureEnabled);
+        Assert.Null(bus.Capture.CaptureDirectory);
         var tmp = Path.Combine(Path.GetTempPath(), "GmEcuSimCapTest_" + Guid.NewGuid().ToString("N"));
-        bus.Capture.CaptureDirectory = tmp;
 
         DriveProgrammingPreconditions(iso);
         Send(iso, [0x34, 0x00, 0x00, 0x00, 0x10]);    // 16-byte declared buffer
         Send(iso, [0x36, 0x00, 0x00, 0x00, 0x00,
-                   0xDE, 0xAD, 0xBE, 0xEF, 0x11, 0x22, 0x33, 0x44]);  // valid spec-mode write
-        // §8.5: programming session $20 is silent on the wire.
+                   0xDE, 0xAD, 0xBE, 0xEF, 0x11, 0x22, 0x33, 0x44]);
         SendNoResp(iso, [0x20]);
 
-        Assert.False(Directory.Exists(tmp), "capture directory must not exist when capture is off");
+        Assert.False(Directory.Exists(tmp));
     }
 
     /// <summary>
@@ -351,7 +204,7 @@ public class BootloaderCaptureTests
         var algo = new FakeSeedKeyAlgorithm();
         var node = NodeFactory.CreateNodeWithGenericModule(algo);
         // Real T43: kernel destination is 0x003FAFE0 - needs all 4 bytes.
-        Assert.Equal(4, node.DownloadAddressByteCount);
+        Assert.Equal(4, node.State.DownloadAddressByteCount);
         bus.AddNode(node);
         var ch = new ChannelSession { Id = 1, Protocol = ProtocolID.ISO15765, Baud = 500_000, Bus = bus };
         var iso = new Iso15765Channel(new IsoTpTimingParameters());
@@ -363,7 +216,6 @@ public class BootloaderCaptureTests
             Id = 1, MaskCanId = 0xFFFFFFFF, PatternCanId = UsdtResp,
             FlowCtlCanId = PhysReq, Format = AddressFormat.Normal,
         });
-        bus.Capture.BootloaderCaptureEnabled = true;
 
         DriveProgrammingPreconditions(iso);
         Send(iso, [0x34, 0x00, 0x00, 0x0C, 0x20]);    // T43 first-kernel declared size 3104

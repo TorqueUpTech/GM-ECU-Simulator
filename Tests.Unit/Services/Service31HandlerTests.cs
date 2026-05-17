@@ -71,7 +71,7 @@ public sealed class Service31HandlerTests
             region.Buffer[i] = (byte)i;
         ushort expected = Common.Protocol.Crc16Ccitt.Compute(region.Buffer);
 
-        var ch = ChannelWithCaptureOn();
+        var ch = EraseChannel();
         bool ok = Service31Handler.Handle(node,
             new byte[] { Sid, 0x01, 0x04, 0x01, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00 },
             ch);
@@ -90,7 +90,7 @@ public sealed class Service31HandlerTests
         var node = NodeFactory.CreateNode();
         node.State.SecurityUnlockedLevel = 1;
         node.State.CapturedFlashRegions.Add(new Core.Ecu.FlashEraseRegion(0x001C0000u, 0x80u));
-        var ch = ChannelWithCaptureOn();
+        var ch = EraseChannel();
 
         // Request length 0x100 = 256B, region is only 0x80 = 128B.
         bool ok = Service31Handler.Handle(node,
@@ -170,19 +170,18 @@ public sealed class Service31HandlerTests
                      TestFrame.DequeueSingleFrameUsdt(ch));
     }
 
-    private static ChannelSession ChannelWithCaptureOn()
+    private static ChannelSession EraseChannel()
     {
         var bus = new VirtualBus();
-        bus.Capture.BootloaderCaptureEnabled = true;
         return new ChannelSession { Id = 1, Protocol = ProtocolID.CAN, Baud = 500_000, Bus = bus };
     }
 
     [Fact]
-    public void Start_EraseFF00_CaptureOn_RecordsRegion()
+    public void Start_EraseFF00_RecordsRegion()
     {
         var node = NodeFactory.CreateNode();
         node.State.SecurityUnlockedLevel = 1;
-        var ch = ChannelWithCaptureOn();
+        var ch = EraseChannel();
 
         bool ok = Service31Handler.Handle(node,
             new byte[] { Sid, 0x01, 0xFF, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 },
@@ -199,31 +198,11 @@ public sealed class Service31HandlerTests
     }
 
     [Fact]
-    public void Start_EraseFF00_CaptureOff_DoesNotRecordRegion()
-    {
-        // Region tracking is gated on BootloaderCaptureEnabled so we don't
-        // allocate a multi-KiB buffer per erase when the user isn't asking
-        // for flash dumps.
-        var node = NodeFactory.CreateNode();
-        node.State.SecurityUnlockedLevel = 1;
-        var bus = new VirtualBus();
-        Assert.False(bus.Capture.BootloaderCaptureEnabled);
-        var ch = new ChannelSession { Id = 1, Protocol = ProtocolID.CAN, Baud = 500_000, Bus = bus };
-
-        bool ok = Service31Handler.Handle(node,
-            new byte[] { Sid, 0x01, 0xFF, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 },
-            ch);
-
-        Assert.True(ok);
-        Assert.Empty(node.State.CapturedFlashRegions);
-    }
-
-    [Fact]
     public void Start_NonErase_DoesNotRecordRegion()
     {
         var node = NodeFactory.CreateNode();
         node.State.SecurityUnlockedLevel = 1;
-        var ch = ChannelWithCaptureOn();
+        var ch = EraseChannel();
 
         // $0401 Check: same option-record shape but it's not Erase.
         Service31Handler.Handle(node,
@@ -240,7 +219,7 @@ public sealed class Service31HandlerTests
         // OOM the simulator if accepted - must be rejected and not recorded.
         var node = NodeFactory.CreateNode();
         node.State.SecurityUnlockedLevel = 1;
-        var ch = ChannelWithCaptureOn();
+        var ch = EraseChannel();
 
         bool ok = Service31Handler.Handle(node,
             new byte[] { Sid, 0x01, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00 },

@@ -90,48 +90,46 @@ public sealed class T43AlgorithmTests
 
     // ----- Programming-session policy -----
     //
-    // Real T43 boot block (file offset 0x2BBFC in a 24264923 image) returns
-    // seed = 00 00 and accepts any key. 6Speed.T43 relies on this and sends
-    // the literal $27 $02 00 00 regardless of what the algorithm would
-    // compute. The simulator models this by declaring BypassAll and flipping
-    // ProgrammingModeActive via $10 $02 (Service10Handler).
+    // The real T43 boot block is sometimes permissive (issues seed 00 00,
+    // accepts key 00 00) but not always - 6Speed.T43 Program.cs:1152/2063
+    // calls gett43key whenever the bootloader replies with a non-zero seed.
+    // So the algorithm runs in programming mode too, and the policy is
+    // UnchangedAlgorithm. The 0000/0000 path is exposed by configuring
+    // fixedSeed = "0000".
 
     [Fact]
-    public void Policy_DeclaresBypassAll()
+    public void Policy_DeclaresUnchangedAlgorithm()
     {
-        Assert.Equal(ProgrammingSessionBehavior.BypassAll, new T43Algorithm().ProgrammingSession);
+        Assert.Equal(ProgrammingSessionBehavior.UnchangedAlgorithm, new T43Algorithm().ProgrammingSession);
     }
 
     [Fact]
-    public void EndToEnd_SixSpeedT43Wire_UnlocksAfterDollar10Dollar02()
+    public void EndToEnd_ProgrammingMode_NonZeroSeed_RequiresRealKey()
     {
-        // Mirrors the wire trace 6Speed.T43 actually emits:
-        //   $10 $02 -> $50 $02
-        //   $27 $01 -> $67 $01 00 00
-        //   $27 $02 00 00 -> $67 $02
-        // With a non-zero fixedSeed configured the operational-mode algorithm
-        // would reject the hardcoded 00 00 key, but $10 $02 puts the ECU into
-        // programming session and BypassAll kicks in.
+        // With UnchangedAlgorithm, $10 $02 does not weaken security. A
+        // non-zero seed still demands the gett43key-computed key, mirroring
+        // 6Speed.T43's gett43key branch at Program.cs:1159.
         var algo = new T43Algorithm();
-        algo.LoadConfig(JsonSerializer.SerializeToElement(new { fixedSeed = "B34C" }));
+        algo.LoadConfig(JsonSerializer.SerializeToElement(new { fixedSeed = "1234" }));
         var node = NodeFactory.CreateNode(
             module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-t43"));
         var ch = NodeFactory.CreateChannel();
 
-        // $10 $02 - enter programming session (security-shortcut path)
         Service10Handler.Handle(node, new byte[] { 0x10, 0x02 }, ch);
-        Assert.Equal(new byte[] { Service.Positive(Service.InitiateDiagnosticOperation), 0x02 },
-                     TestFrame.DequeueSingleFrameUsdt(ch));
-        Assert.True(node.State.SecurityProgrammingShortcutActive);
+        TestFrame.DequeueSingleFrameUsdt(ch);
 
-        // $27 $01 - requestSeed
         Service27Handler.Handle(node, new byte[] { 0x27, 0x01 }, ch, nowMs: 0);
-        // Bypass: seed = 00 00 instead of the configured B3 4C.
-        Assert.Equal(new byte[] { Service.Positive(Service.SecurityAccess), 0x01, 0x00, 0x00 },
+        Assert.Equal(new byte[] { Service.Positive(Service.SecurityAccess), 0x01, 0x12, 0x34 },
                      TestFrame.DequeueSingleFrameUsdt(ch));
 
-        // $27 $02 00 00 - the hardcoded key 6Speed.T43 actually sends
+        // Hardcoded 00 00 would unlock under BypassAll - under UnchangedAlgorithm it gets NRC $35.
         Service27Handler.Handle(node, new byte[] { 0x27, 0x02, 0x00, 0x00 }, ch, nowMs: 0);
+        Assert.Equal(new byte[] { Service.NegativeResponse, Service.SecurityAccess, Nrc.InvalidKey },
+                     TestFrame.DequeueSingleFrameUsdt(ch));
+        Assert.Equal(0, node.State.SecurityUnlockedLevel);
+
+        // The real key (gett43key(0x1234) = 0xA1E7) unlocks.
+        Service27Handler.Handle(node, new byte[] { 0x27, 0x02, 0xA1, 0xE7 }, ch, nowMs: 0);
         Assert.Equal(new byte[] { Service.Positive(Service.SecurityAccess), 0x02 },
                      TestFrame.DequeueSingleFrameUsdt(ch));
         Assert.Equal(1, node.State.SecurityUnlockedLevel);
@@ -140,10 +138,8 @@ public sealed class T43AlgorithmTests
     [Fact]
     public void EndToEnd_OperationalMode_RequiresRealKey()
     {
-        // Without $10 $02, BypassAll is dormant. $27 $02 00 00 should fail
-        // when the algorithm has a non-zero fixed seed - matching the wire
-        // trace I diagnosed earlier (the NRC $35 we send before $10 $02 is
-        // accepted).
+        // Without $10 $02, $27 $02 00 00 should fail when the algorithm has
+        // a non-zero fixed seed.
         var algo = new T43Algorithm();
         algo.LoadConfig(JsonSerializer.SerializeToElement(new { fixedSeed = "B34C" }));
         var node = NodeFactory.CreateNode(

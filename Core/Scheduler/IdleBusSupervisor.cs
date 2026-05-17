@@ -73,7 +73,7 @@ public sealed class IdleBusSupervisor : IDisposable
     /// </summary>
     public void DoReset(long idleMs)
     {
-        bus.LogDiagnostic?.Invoke(
+        bus.LogSim?.Invoke(
             $"[idle] forced reset after {idleMs} ms - applying exit_diagnostic_services to active ECUs");
 
         foreach (var node in bus.Nodes)
@@ -81,7 +81,7 @@ public sealed class IdleBusSupervisor : IDisposable
             if (node.State.TesterPresent.State == TesterPresentTimerState.Active)
             {
                 EcuExitLogic.Run(node, scheduler, node.State.LastEnhancedChannel);
-                bus.LogDiagnostic?.Invoke($"[idle] {node.Name}: exit_diagnostic_services applied");
+                bus.LogSim?.Invoke($"[idle] {node.Name}: exit_diagnostic_services applied");
             }
             node.State.LastEnhancedChannel = null;
         }

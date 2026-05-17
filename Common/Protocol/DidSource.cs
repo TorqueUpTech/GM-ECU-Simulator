@@ -21,12 +21,17 @@ namespace Common.Protocol;
 ///   identifier set is now whatever the bin contained, full stop".</description></item>
 ///   <item><description><see cref="Auto"/> - written by Auto-populate from
 ///   <c>DefaultDidValues</c>.</description></item>
+///   <item><description><see cref="Bytecode"/> - pulled from a $53 COMPARE_DATA
+///   routine literal in a primed DPS archive's utility-file bytecode. The
+///   archive itself told us this is the value DPS will assert against during
+///   Phase 3, so the simulator returns it verbatim.</description></item>
 /// </list>
 /// </summary>
 public enum DidSource : byte
 {
-    Blank = 0,
-    User  = 1,
-    Bin   = 2,
-    Auto  = 3,
+    Blank    = 0,
+    User     = 1,
+    Bin      = 2,
+    Auto     = 3,
+    Bytecode = 4,
 }

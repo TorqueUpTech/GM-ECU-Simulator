@@ -1,6 +1,8 @@
 using System.IO;
 using System.Windows;
+using Common;
 using Core.Bus;
+using Core.Dps;
 using Core.Persistence;
 using Core.Replay;
 using GMThemeManager;
@@ -20,6 +22,15 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // DPS prime reports get their own folder. Sibling of bus logs/ and
+        // shim logs/, organized by output source rather than dumped loose at
+        // the GmEcuSimulator root.
+        var primeLogDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GmEcuSimulator", "death by dps");
+        Directory.CreateDirectory(primeLogDir);
+        PrimeReportWriter.LogDir = primeLogDir;
+
         // Install the active palette into Application.Resources BEFORE any
         // window is constructed - that way DynamicResource lookups in the
         // first MainWindow already resolve through the swap dictionary.
@@ -38,11 +49,19 @@ public partial class App : Application
             return coord;
         });
         services.AddSingleton<NamedPipeServer>(sp =>
-            new NamedPipeServer(sp.GetRequiredService<VirtualBus>(), s => GmEcuSimulator.MainWindow.AppendLog(s)));
+            new NamedPipeServer(sp.GetRequiredService<VirtualBus>(), s => GmEcuSimulator.MainWindow.AppendJ2534Log(s)));
         Services = services.BuildServiceProvider();
 
         var bus = Services.GetRequiredService<VirtualBus>();
         var replay = Services.GetRequiredService<BinReplayCoordinator>();
+
+        // Default the bootloader-capture directory. CaptureSettings leaves
+        // it null in its constructor so unit tests don't write to disk; WPF
+        // unconditionally points it at %LOCALAPPDATA%\GmEcuSimulator\captures
+        // so every programming session leaves a usable .bin trail.
+        // ConfigStore.ApplyTo overwrites this if the loaded config carries
+        // a user-set directory override.
+        bus.Capture.CaptureDirectory = CaptureSettings.DefaultDirectory();
 
         // Frame-level Tx/Rx sink for the Bus log tab. AppendBusFrame is gated
         // by the "Log frame traffic" checkbox so DPID Fast-band streams don't
@@ -50,9 +69,13 @@ public partial class App : Application
         // pretty (space-delimited) for the textbox, csv for the file.
         bus.LogFrame = (pretty, csv, isTp) => GmEcuSimulator.MainWindow.AppendBusFrame(pretty, csv, isTp);
 
-        // Always-on diagnostic sink — control-plane events (periodic
-        // register/unregister, etc.). Low volume; never gated.
-        bus.LogDiagnostic = s => GmEcuSimulator.MainWindow.AppendLog(s);
+        // Always-on diagnostic sinks. LogJ2534 handles events emitted from
+        // the Shim/ project (PassThru* IPC narration, pipe lifecycle,
+        // periodic register/unregister); LogSim handles simulator-internal
+        // events (service handlers, security modules, scheduler, app
+        // lifecycle). Both are low volume; never gated by the textbox flag.
+        bus.LogJ2534 = s => GmEcuSimulator.MainWindow.AppendJ2534Log(s);
+        bus.LogSim   = s => GmEcuSimulator.MainWindow.AppendSimLog(s);
 
         // High-prominence status sink — currently only rejected non-CAN
         // connect attempts. Routed to the status bar at the bottom of the
@@ -60,34 +83,50 @@ public partial class App : Application
         // got ERR_INVALID_PROTOCOL_ID back from PassThruConnect.
         bus.OnStatusMessage = s => GmEcuSimulator.MainWindow.SetStatus(s);
 
-        // Auto-load: if the user has a saved config in LocalAppData, hydrate the
-        // bus from it; otherwise fall back to the built-in default ECUs.
+        // Migrate any legacy %LocalAppData%\GmEcuSimulator\config.json to the
+        // per-mode ecu_simulator_config.json filename. Idempotent - no-op once
+        // migration has run or when the target already exists.
+        ConfigStore.MigrateLegacyConfigFile();
+
+        // Pick up the persisted mode now (separate from MainViewModel's full
+        // AppSettings load - we only need Mode here to choose the right config
+        // file). Mode defaults to EcuSimulator for fresh installs.
+        var bootSettings = AppSettings.Load();
+        var mode = bootSettings.Mode;
+
+        // Auto-load: per-mode config file. DPS modes are volatile-by-design
+        // (clean state every launch), so the load path is skipped entirely and
+        // the bus starts empty. Persistable modes load if a file exists; for
+        // ECU Simulator first-run we fall back to the built-in default ECUs so
+        // the user has something visible immediately.
         try
         {
-            var path = ConfigStore.DefaultPath;
-            if (File.Exists(path))
+            if (mode.PersistsConfig())
             {
-                var cfg = ConfigStore.Load(path);
-                ConfigStore.ApplyTo(cfg, bus);
-                if (cfg.BinReplay != null)
+                var path = ConfigStore.PathForMode(mode);
+                if (File.Exists(path))
                 {
-                    replay.LoopMode = cfg.BinReplay.LoopMode;
-                    replay.PersistedAutoLoadOnStart = cfg.BinReplay.AutoLoadOnStart;
-                    // Auto-loading the actual bin file is gated on the
-                    // BinaryWorker reference — log an info message until then
-                    // so the user knows their AutoLoadOnStart preference
-                    // survived but the load itself is queued.
-                    if (cfg.BinReplay.AutoLoadOnStart && !string.IsNullOrEmpty(cfg.BinReplay.FilePath))
-                        GmEcuSimulator.MainWindow.AppendLog(
-                            $"[bin-replay] AutoLoadOnStart={cfg.BinReplay.FilePath} - skipped (file loader not wired)");
+                    var cfg = ConfigStore.Load(path);
+                    ConfigStore.ApplyTo(cfg, bus);
+                    if (cfg.BinReplay != null)
+                    {
+                        replay.LoopMode = cfg.BinReplay.LoopMode;
+                        replay.PersistedAutoLoadOnStart = cfg.BinReplay.AutoLoadOnStart;
+                        if (cfg.BinReplay.AutoLoadOnStart && !string.IsNullOrEmpty(cfg.BinReplay.FilePath))
+                            GmEcuSimulator.MainWindow.AppendSimLog(
+                                $"[bin-replay] AutoLoadOnStart={cfg.BinReplay.FilePath} - skipped (file loader not wired)");
+                    }
+                }
+                else if (mode == AppMode.EcuSimulator)
+                {
+                    DefaultEcuConfig.ApplyIfEmpty(bus);
                 }
             }
-            else DefaultEcuConfig.ApplyIfEmpty(bus);
         }
         catch (Exception ex)
         {
-            GmEcuSimulator.MainWindow.AppendLog($"Auto-load failed: {ex.Message}; reverting to defaults");
-            DefaultEcuConfig.ApplyIfEmpty(bus);
+            GmEcuSimulator.MainWindow.AppendSimLog($"Auto-load failed: {ex.Message}; reverting to defaults");
+            if (mode == AppMode.EcuSimulator) DefaultEcuConfig.ApplyIfEmpty(bus);
         }
 
         bus.Scheduler.Start();
@@ -108,15 +147,25 @@ public partial class App : Application
         catch (Exception ex)
         {
             registered = false;
-            bus.LogDiagnostic?.Invoke($"J2534 registration probe failed: {ex.Message}; assuming unregistered");
+            bus.LogSim?.Invoke($"J2534 registration probe failed: {ex.Message}; assuming unregistered");
         }
         if (registered)
             pipeServer.Start();
         else
-            bus.LogDiagnostic?.Invoke("J2534 not registered - IPC pipe not started; register from Tools to enable host connections");
+            bus.LogSim?.Invoke("J2534 not registered - IPC pipe not started; register from Tools to enable host connections");
 
         mainWindow = new MainWindow();
         mainWindow.Bind(bus, replay, pipeServer);
+
+        // No startup auto-prime: priming is a DPS-mode operation, and DPS modes
+        // do not PersistsConfig - they always start clean and the user re-primes
+        // manually. A previous build auto-applied any cfg.PrimeArchivePath found
+        // in persistable-mode config files, which is precisely how a stray prime
+        // in ECU Simulator mode used to resurrect a "removed" ECU on next launch.
+        // The MainViewModel mode-load path (ChangeMode) now scrubs stale prime
+        // paths from non-DPS configs on load, so a corrupt file self-heals on
+        // the next save.
+
         mainWindow.Show();
     }
 
@@ -130,7 +179,7 @@ public partial class App : Application
         // Flush + close the file log if it's active. Stop() drains the writer's
         // pending queue, writes a trailer, and disposes the StreamWriter so the
         // last few hundred lines of a download don't get lost on shutdown.
-        GmEcuSimulator.MainWindow.FileLog.Stop();
+        GmEcuSimulator.MainWindow.BusLog.Stop();
 
         // Async path is mandatory here: NamedPipeServer is IAsyncDisposable
         // (no IDisposable). ServiceProvider.Dispose() walks its singletons

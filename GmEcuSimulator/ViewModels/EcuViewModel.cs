@@ -45,23 +45,56 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
 
         LoadInfoFromBinCommand = new RelayCommand(LoadInfoFromBin);
         AutoPopulateDidsCommand = new RelayCommand(AutoPopulateMissingDids);
+        EditPrimeCommand = new RelayCommand(EditPrime, () => primeContext != null && bus != null);
+    }
 
-        // Identifiers grid: every well-known $1A DID gets a pre-populated row
-        // so the user can fill in values without "add" clicks. Leave Value
-        // blank to keep a DID unconfigured ($1A returns NRC $31 for it). Any
-        // non-standard DIDs already on the model (e.g. from a loaded bin or
-        // a hand-edited JSON) are appended after the well-known set so nothing
-        // is hidden. We DON'T subscribe to Model.IdentifiersChanged - the
-        // existing well-known-DID textboxes ($90/$92/$98/$C1/$C2/$CC) call
-        // SetIdentifier on every keystroke and re-running RebuildGrid would
-        // tear the user's open DataGrid edit out from under them. External
-        // mutations (LoadInfoFromBin) call RefreshIdentifiersGrid explicitly.
-        Identifiers = new ObservableCollection<IdentifierRowViewModel>();
-        RebuildIdentifierRows();
+    // -------- Prime wizard re-entry --------
 
-        // Pre-grid identity-field validators dropped with the dedicated
-        // textboxes. The Identifiers grid does its own value-format handling
-        // (ASCII vs hex toggle) and doesn't surface a red-border indicator.
+    private PrimeWizard.PrimeWizardContext? primeContext;
+    private Core.Bus.VirtualBus? bus;
+
+    /// <summary>
+    /// True when this ECU was produced by a successful Prime wizard run and
+    /// the wizard context is available for re-entry. Drives the Edit prime
+    /// button's visibility on the main window's per-ECU template.
+    /// </summary>
+    public bool IsPrimed => primeContext != null;
+
+    /// <summary>
+    /// Called by MainViewModel.Rebuild for every ECU. The bus reference is
+    /// needed when the user re-opens the prime wizard via EditPrimeCommand.
+    /// </summary>
+    public void BindBus(Core.Bus.VirtualBus bus) => this.bus = bus;
+
+    /// <summary>
+    /// Called by MainViewModel after the wizard registers a new primed ECU.
+    /// Stores the wizard's final context so the user can re-open the wizard
+    /// later via <see cref="EditPrimeCommand"/>; the context lives for the
+    /// session and is discarded when the ECU is removed.
+    /// </summary>
+    public void AttachPrimeContext(PrimeWizard.PrimeWizardContext context)
+    {
+        primeContext = context;
+        OnPropertyChanged(nameof(IsPrimed));
+        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+    }
+
+    public RelayCommand EditPrimeCommand { get; }
+
+    private void EditPrime()
+    {
+        if (primeContext is null || bus is null) return;
+        var wizard = new Views.PrimeWizard.PrimeWizardWindow(bus, Model, primeContext)
+        {
+            Owner = System.Windows.Application.Current?.MainWindow,
+        };
+        wizard.ShowDialog();
+        if (wizard.CommittedNode is not null && wizard.CommittedDataset is not null)
+        {
+            // Wizard already swapped the bus node; refresh the stashed
+            // context with the (possibly mutated) one for the next re-open.
+            primeContext = wizard.Context;
+        }
     }
 
     public string Name
@@ -108,22 +141,18 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
 
     // ---------------- $1A ECU identity DIDs ----------------
     //
-    // Editing happens through the Identifiers grid further down the ECU
-    // panel - every well-known DID gets a pre-populated row. The grid pushes
-    // each value straight to EcuNode.SetIdentifier, which is the same storage
-    // the $1A handler reads from at runtime. Persisted by the existing
-    // IdentifierDto round-trip in ConfigStore.
-    //
-    // "Load Info From Bin..." (LoadInfoFromBinCommand below) writes extracted
-    // values directly into EcuNode.Identifiers and then refreshes the grid.
+    // No grid surface in the inspector - the Bin menu's Load Info From Bin /
+    // Auto-populate DIDs items are the user-facing way to populate DIDs.
+    // Both writers push straight to EcuNode.SetIdentifier, the same storage
+    // the $1A handler reads from at runtime. DIDs live in memory only
+    // (v12 dropped IdentifierDto from the JSON schema); re-seed every
+    // session via the Bin menu or File -> Prime from DPS archive.
 
     /// <summary>
-    /// "Load Info From Bin" button command. Pops a file picker, parses the
-    /// selected .bin via <see cref="BinIdentificationReader"/>, and pushes the
-    /// extracted identity fields into the inspector textboxes. Skips any
-    /// field the parser couldn't resolve (so the user can fill blanks
-    /// manually) and only overwrites existing values when the parser found
-    /// something new - keeps the operation idempotent across re-loads.
+    /// "Load Info From Bin" command. Pops a file picker, parses the selected
+    /// .bin via <see cref="BinIdentificationReader"/>, and pushes the extracted
+    /// identity fields into <see cref="EcuNode.Identifiers"/>. Bound from the
+    /// Bin menu via {Binding SelectedEcu.LoadInfoFromBinCommand}.
     /// </summary>
     public RelayCommand LoadInfoFromBinCommand { get; }
 
@@ -218,10 +247,6 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
             foreach (var w in result.Warnings) lines.Add("  - " + w);
         }
 
-        // Sync the Identifiers grid with the model since we just wrote five
-        // well-known DIDs through their dedicated property setters.
-        RefreshIdentifiersGrid();
-
         MessageBox.Show(string.Join(Environment.NewLine, lines),
             "Load Info From Bin", MessageBoxButton.OK, MessageBoxImage.Information);
     }
@@ -292,7 +317,6 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
             Model.SetIdentifier(did, bytes, Common.Protocol.DidSource.Auto);
             populated++;
         }
-        RefreshIdentifiersGrid();
 
         if (populated == 0)
         {
@@ -302,8 +326,8 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
                   $"source=user were preserved; re-run and pick 'Overwrite user-blank " +
                   $"fields' to fill those too."
                 : "Nothing to do - every well-known DID already has a value. " +
-                  "Clear an entry in the Identifiers grid (Value column) and re-run " +
-                  "to re-fill it with the placeholder default.";
+                  "Edit the JSON config to clear an entry and re-run to re-fill " +
+                  "it with the placeholder default.";
             MessageBox.Show(msg, "Auto-populate DIDs",
                 MessageBoxButton.OK, MessageBoxImage.Information);
         }
@@ -323,72 +347,9 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         }
     }
 
-    /// <summary>FC.STmin byte sent on First Frame reception. Hex display, e.g. "0x00".</summary>
-    public string FlowControlSeparationTimeHex
-    {
-        get => $"0x{Model.FlowControlSeparationTime:X2}";
-        set
-        {
-            if (TryParseHexByte(value, out var v) && Model.FlowControlSeparationTime != v)
-            {
-                Model.FlowControlSeparationTime = v;
-                OnPropertyChanged();
-            }
-        }
-    }
-
     /// <summary>
-    /// Number of bytes in the $36 startingAddress field. Spec range 2..4;
-    /// the editor surfaces these as a fixed-options dropdown so a bad value
-    /// can't sneak in. Default 4 matches T43-era ECUs.
-    /// </summary>
-    public int DownloadAddressByteCount
-    {
-        get => Model.DownloadAddressByteCount;
-        set
-        {
-            if (value is < 2 or > 4) return;
-            if (Model.DownloadAddressByteCount == value) return;
-            Model.DownloadAddressByteCount = value;
-            OnPropertyChanged();
-        }
-    }
-
-    /// <summary>The fixed list of valid values for the editor dropdown.</summary>
-    public IReadOnlyList<int> DownloadAddressByteCountOptions { get; } = new[] { 2, 3, 4 };
-
-    /// <summary>
-    /// GMW3110 §8.16 SPS classification. Default A is a normal running ECU;
-    /// C activates the blank-ECU state machine that GM SPS / DPS uses during
-    /// programming-discovery (silent until $A2 received while $28 active,
-    /// then responds on SPS_PrimeRsp). The editor exposes this as a dropdown
-    /// driven by <see cref="SpsTypeOptions"/>.
-    /// </summary>
-    public Common.Protocol.SpsType SpsType
-    {
-        get => Model.SpsType;
-        set
-        {
-            if (Model.SpsType == value) return;
-            Model.SpsType = value;
-            OnPropertyChanged();
-        }
-    }
-
-    /// <summary>The fixed list of valid SpsType values for the editor dropdown.</summary>
-    public IReadOnlyList<Common.Protocol.SpsType> SpsTypeOptions { get; } = new[]
-    {
-        Common.Protocol.SpsType.A,
-        Common.Protocol.SpsType.B,
-        Common.Protocol.SpsType.C,
-    };
-
-    /// <summary>
-    /// 8-bit diagnostic address used to derive SPS_PrimeReq/Rsp for SpsType.C.
-    /// For type A/B this field is informational. Hex display, e.g. "0x11".
-    /// Setting this does NOT auto-update the CAN ID fields - the user is
-    /// expected to maintain the relationship PhysReq = $000|addr,
-    /// USDT resp = $300|addr when configuring a SPS_TYPE_C ECU.
+    /// 8-bit diagnostic address returned by $1A $B0. Hex display, e.g. "0x11".
+    /// Typically the low byte of PhysicalRequestCanId.
     /// </summary>
     public string DiagnosticAddressHex
     {
@@ -479,6 +440,16 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         private set => SetField(ref securityStatusText, value);
     }
 
+    // Short, pill-friendly variant of SecurityStatusText for the titlebar
+    // pill. The Security tab still uses SecurityStatusText so the level /
+    // remaining-time detail stays visible there.
+    private string securityPillText = "ECU Locked";
+    public string SecurityPillText
+    {
+        get => securityPillText;
+        private set => SetField(ref securityPillText, value);
+    }
+
     private string securityFailedAttemptsText = "0 / 3";
     public string SecurityFailedAttemptsText
     {
@@ -491,6 +462,13 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     {
         get => securityPendingSeedText;
         private set => SetField(ref securityPendingSeedText, value);
+    }
+
+    private string securityProgSessionText = "(no module)";
+    public string SecurityProgSessionText
+    {
+        get => securityProgSessionText;
+        private set => SetField(ref securityProgSessionText, value);
     }
 
     /// <summary>
@@ -543,14 +521,17 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         {
             double remainingSec = (s.SecurityLockoutUntilMs - nowMs) / 1000.0;
             SecurityStatusText = $"Locked out - {remainingSec:F1} s remaining";
+            SecurityPillText   = "ECU Locked out";
         }
         else if (s.SecurityUnlockedLevel > 0)
         {
             SecurityStatusText = $"Unlocked (level {s.SecurityUnlockedLevel})";
+            SecurityPillText   = "ECU Unlocked";
         }
         else
         {
             SecurityStatusText = "Locked";
+            SecurityPillText   = "ECU Locked";
         }
 
         SecurityFailedAttemptsText = $"{s.SecurityFailedAttempts} / 3";
@@ -565,16 +546,31 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
             SecurityPendingSeedText =
                 $"level {s.SecurityPendingSeedLevel}, seed = {string.Join(" ", seed.Select(b => b.ToString("X2")))}";
         }
-    }
 
-    /// <summary>
-    /// When true the security module short-circuits every $27 step to a
-    /// positive response without invoking the algorithm. Persisted per ECU.
-    /// </summary>
-    public bool BypassSecurity
-    {
-        get => Model.BypassSecurity;
-        set { if (Model.BypassSecurity != value) { Model.BypassSecurity = value; OnPropertyChanged(); } }
+        // Module's programming-session policy + the live shortcut flag that
+        // gates the bypass path in Gmw3110_2010_Generic. The shortcut flag is
+        // set by $10 $02 or by the full $28 + $A5 $01/$02 + $A5 $03 chain; it
+        // only changes the wire behaviour when the module's policy is
+        // BypassAll.
+        var module = Model.SecurityModule;
+        if (module is null)
+        {
+            SecurityProgSessionText = "(no module)";
+        }
+        else
+        {
+            bool inProgSession = s.SecurityProgrammingShortcutActive;
+            SecurityProgSessionText = module.ProgrammingSession switch
+            {
+                ProgrammingSessionBehavior.BypassAll => inProgSession
+                    ? "Bypass active (in prog session)"
+                    : "Bypass armed (not in prog session)",
+                ProgrammingSessionBehavior.UnchangedAlgorithm => inProgSession
+                    ? "Enforce seed/key (in prog session)"
+                    : "Enforce seed/key (not in prog session)",
+                _ => module.ProgrammingSession.ToString(),
+            };
+        }
     }
 
     private string selectedSecurityModuleId;
@@ -601,6 +597,14 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
             Model.SecurityModule = SecurityModuleRegistry.Create(selectedSecurityModuleId);
             Model.SecurityModule?.LoadConfig(Model.SecurityModuleConfig);
         }
+        // Spec-aligned: a real ECU's security state is bound to its security
+        // module's lifetime. Replacing the module means a fresh start - any
+        // unlocked level, pending seed, failed-attempt counter, or module-
+        // private bookkeeping from the prior module is now stale and would
+        // silently mask the new module's behaviour (e.g. a prior BypassAll
+        // unlock makes the new algorithm's $27 short-circuit through the
+        // "already unlocked -> seed=00 00" branch without ever running).
+        ResetSecurityState();
     }
 
     private void OnSecurityEntriesChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -654,54 +658,6 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         _ => e.GetRawText(),
     };
 
-    // ---------------- Identifiers grid ----------------
-    //
-    // Generic table covering every $1A DID configured on this ECU. The five
-    // well-known DID textboxes higher up the panel ($90/$92/$98/$C1/$C2/$CC)
-    // are still there for convenience, but the grid is the canonical surface
-    // for anything DPS / a real tester might read - VINs, part numbers, calib
-    // IDs, supplier metadata, programming date, manufacturer enable counters,
-    // and the long $C0..$CA / $F1..$F4 ranges that the DPS Get Controller
-    // Info flow walks through. Persists through ConfigStore.EcuDtoFrom's
-    // existing Identifiers round-trip - no schema change needed.
-
-    /// <summary>Fixed rows: every well-known $1A DID plus any extras already
-    /// configured on the model. Empty Value means the DID isn't set (and $1A
-    /// will return NRC $31 for it).</summary>
-    public ObservableCollection<IdentifierRowViewModel> Identifiers { get; }
-
-    /// <summary>
-    /// Builds the row set: one row per <see cref="Gmw3110DidNames.KnownDids"/>
-    /// entry, plus any extras already present on <see cref="EcuNode.Identifiers"/>
-    /// that aren't in the well-known list (e.g. loaded from a custom JSON).
-    /// Existing rows are replaced; safe to call when the model changes
-    /// externally (LoadInfoFromBin, project file open).
-    /// </summary>
-    private void RebuildIdentifierRows()
-    {
-        Identifiers.Clear();
-        var known = new HashSet<byte>(Gmw3110DidNames.KnownDids);
-        foreach (var did in Gmw3110DidNames.KnownDids)
-        {
-            var bytes = Model.GetIdentifier(did) ?? Array.Empty<byte>();
-            Identifiers.Add(new IdentifierRowViewModel(Model, did, bytes));
-        }
-        // Append any extras the model already has (e.g. from a loaded bin or
-        // hand-edited JSON), sorted by DID for stable ordering.
-        foreach (var kv in Model.Identifiers.OrderBy(kv => kv.Key))
-        {
-            if (known.Contains(kv.Key)) continue;
-            Identifiers.Add(new IdentifierRowViewModel(Model, kv.Key, kv.Value));
-        }
-    }
-
-    /// <summary>
-    /// Rebuilds the grid rows after an external mutation (e.g. Load Info From
-    /// Bin populates several DIDs through their dedicated property setters).
-    /// Public so callers outside the VM (e.g. project-file load) can refresh
-    /// the displayed rows.
-    /// </summary>
-    public void RefreshIdentifiersGrid() => RebuildIdentifierRows();
 }
 
 public sealed class KeyValueEntry : NotifyPropertyChangedBase

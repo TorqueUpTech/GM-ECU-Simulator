@@ -177,79 +177,11 @@ public sealed class Gmw3110_2010_GenericTests
         Assert.Equal(new byte[] { Service.NegativeResponse, Service.SecurityAccess, Nrc.SubFunctionNotSupportedInvalidFormat }, Pop());
     }
 
-    // ----- BypassSecurity short-circuit -----
-
-    [Fact]
-    public void Bypass_RequestSeed_EmitsZeroSeed_AndStoresPending()
-    {
-        node.BypassSecurity = true;
-        algo.ComputeKeySucceeds = false; // would normally NRC the sendKey if reached
-
-        Dispatch(0x27, 0x01);
-
-        Assert.Equal(new byte[] { Service.Positive(Service.SecurityAccess), 0x01, 0x00, 0x00 }, Pop());
-        Assert.Equal(1, node.State.SecurityPendingSeedLevel);
-        Assert.Equal(new byte[] { 0x00, 0x00 }, node.State.SecurityLastIssuedSeed);
-    }
-
-    [Fact]
-    public void Bypass_SendKey_AnyKey_Unlocks()
-    {
-        node.BypassSecurity = true;
-
-        Dispatch(0x27, 0x01); Pop();
-        Dispatch(0x27, 0x02, 0x00, 0x00); // the exact key 6Speed.T43 hardcodes
-
-        Assert.Equal(new byte[] { Service.Positive(Service.SecurityAccess), 0x02 }, Pop());
-        Assert.Equal(1, node.State.SecurityUnlockedLevel);
-        Assert.Null(node.State.SecurityLastIssuedSeed);
-        Assert.Equal(0, node.State.SecurityPendingSeedLevel);
-        Assert.Equal(0, node.State.SecurityFailedAttempts);
-    }
-
-    [Fact]
-    public void Bypass_SendKey_WithoutRequestSeed_StillUnlocks()
-    {
-        // Bypass skips the pending-seed precondition - a tester that goes
-        // straight to sendKey still gets a positive response.
-        node.BypassSecurity = true;
-
-        Dispatch(0x27, 0x02, 0xDE, 0xAD);
-
-        Assert.Equal(new byte[] { Service.Positive(Service.SecurityAccess), 0x02 }, Pop());
-        Assert.Equal(1, node.State.SecurityUnlockedLevel);
-    }
-
-    [Fact]
-    public void Bypass_OverridesLockout()
-    {
-        // Pre-existing lockout (e.g. left over from before bypass was toggled
-        // on) must not block bypass-mode unlocks.
-        node.State.SecurityLockoutUntilMs = 999_999;
-        node.BypassSecurity = true;
-
-        Dispatch(0x27, 0x01);
-
-        Assert.Equal(new byte[] { Service.Positive(Service.SecurityAccess), 0x01, 0x00, 0x00 }, Pop());
-    }
-
-    [Fact]
-    public void Bypass_SkipsAlgorithmLevelFilter()
-    {
-        // FakeSeedKeyAlgorithm only advertises level 1; bypass accepts any
-        // level the tester asks for.
-        node.BypassSecurity = true;
-
-        Dispatch(0x27, 0x09); // sub 9 -> level 5, which the algo does NOT support
-
-        Assert.Equal(Service.Positive(Service.SecurityAccess), Pop()[0]);
-    }
-
     // ----- ProgrammingSession + BypassAll policy (T43-style) -----
     //
     // The boot-block stub behaviour is automatic when the algorithm declares
-    // BypassAll and the ECU is in a programming session. No manual UI
-    // toggle of BypassSecurity required.
+    // BypassAll and the ECU is in a programming session. Select the
+    // gm-programming-bypass module on the ECU to opt into this path.
 
     [Fact]
     public void ProgrammingSession_WithBypassAllAlgo_EmitsZeroSeed()

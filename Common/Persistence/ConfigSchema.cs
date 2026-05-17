@@ -22,8 +22,7 @@ namespace Common.Persistence;
 // support. v1/v2 files load with both null → $27 returns NRC $11 as before.
 //
 // v4 added per-ECU Identifiers (list of IdentifierDto) for $1A
-// ReadDataByIdentifier responses. v1/v2/v3 files load with Identifiers == null
-// -> $1A returns NRC $31 RequestOutOfRange for every DID, as before.
+// ReadDataByIdentifier responses. (Dropped in v12 - see below.)
 //
 // v5 added per-ECU BypassSecurity flag and per-ECU ISO-TP FlowControl bytes
 // (FlowControlBlockSize / FlowControlSeparationTime). v1-v4 files load with
@@ -47,20 +46,42 @@ namespace Common.Persistence;
 // into the global - users who had it disabled on any ECU need to toggle the
 // menu item off after upgrading.
 //
-// v9 added per-ECU SpsType + DiagnosticAddress for GMW3110 §8.16 SPS_TYPE_C
-// support. v1-v8 configs load with SpsType absent -> default SpsType.A
-// (current behaviour, fully-programmed ECU). DiagnosticAddress defaults to 0
-// and is only meaningful for SpsType.C ECUs, which use it to derive
-// SPS_PrimeReq/Rsp.
+// v9 added per-ECU DiagnosticAddress (returned by $1A $B0). Defaults to 0
+// for v1-v8 configs that lack the field; users set it to match the low byte
+// of PhysicalRequestCanId. (v9 also briefly carried a SpsType enum for the
+// blank-ECU activation flow; that was removed once we collapsed the persona
+// to always-on Type-A behaviour - the field is silently dropped on load.)
 //
-// v10 added IdentifierDto.Source so the editor's Identifiers grid can
-// surface "user / bin / auto / blank" per row and the sticky-user rule
-// survives save / reload. v1-v9 configs load with Source absent → default
-// User, matching the pre-tracking assumption that every persisted DID
-// was hand-typed by the user.
+// v10 added IdentifierDto.Source per-row provenance tracking. (Dropped
+// in v12 along with the rest of IdentifierDto.)
+//
+// v11 dropped per-ECU BypassSecurity. The per-ECU security module dropdown
+// covers the same use case (select gm-programming-bypass for stub-security
+// ECUs). v1-v10 configs still load: STJ silently ignores the now-unknown
+// property. Users who had it enabled need to switch the affected ECU's
+// security module to gm-programming-bypass after upgrading.
+//
+// v12 dropped per-ECU Identifiers. DIDs are now seeded at runtime only
+// (Bin menu -> Load info from BIN... / Auto-populate DIDs, or File ->
+// Prime from DPS archive). v1-v11 configs still load: STJ silently
+// ignores the now-unknown property, so any persisted DIDs are not carried
+// over and the user has to re-seed via the Bin menu or a primed archive.
+//
+// v13 dropped per-ECU DownloadAddressByteCount (the v7 field). The $36
+// startingAddress is fixed at 4 bytes in production to match T43-era and
+// later GM ECUs (kernel destinations like 0x003FAFE0 don't fit in 3 bytes,
+// and tools like 6Speed.T43 always send the full 4). Tests that need to
+// exercise 2/3-byte address layouts override NodeState.DownloadAddressByteCount
+// directly. v1-v12 configs still load: STJ silently ignores the now-unknown
+// property.
+//
+// v14 dropped the FC.STmin half of the v5 FlowControl pair. FC.BS stays
+// (6Speed.T43 needs BS=1); FC.STmin was never needed in practice and the
+// most-permissive 0 is always correct. v1-v13 configs still load: STJ
+// silently ignores the now-unknown FlowControlSeparationTime property.
 public sealed class SimulatorConfig
 {
-    public const int CurrentVersion = 10;
+    public const int CurrentVersion = 12;
     public const int MinSupportedVersion = 1;
 
     public int Version { get; set; } = CurrentVersion;
@@ -75,15 +96,29 @@ public sealed class SimulatorConfig
     // present, ConfigStore.ApplyTo restores the Enabled flag (and optional
     // directory override) to bus.Capture so the toggle survives a restart.
     public BootloaderCaptureConfig? BootloaderCapture { get; set; }
+
+    // Path to a DPS programming archive (.zip) the simulator should auto-
+    // ingest on startup via Core.Dps.ArchivePrimer.ApplyTo. Null = no
+    // prime-from-archive behaviour. Set by the File -> Prime from DPS
+    // archive... menu item.
+    public string? PrimeArchivePath { get; set; }
+
+    // Optional path to a full 2 MiB ECU flash readback (.bin) whose boot
+    // block (0x000000-0x00FFFF) is spliced with the archive OS module to
+    // form a synthetic full binary for BinIdentificationReader. Null = no
+    // donor (archive-only prime, walker returns null as before).
+    public string? DonorBinPath { get; set; }
 }
 
 // Persisted bootloader-capture configuration. Slots into
 // SimulatorConfig.BootloaderCapture. Directory is null when the user is happy
 // with the default (%LOCALAPPDATA%\GmEcuSimulator\captures); a non-null value
-// overrides CaptureSettings.CaptureDirectory at load time.
+// overrides CaptureSettings.CaptureDirectory at load time. The legacy
+// Enabled flag from earlier versions is silently dropped on load - capture
+// writes are unconditional now (controlled by directory presence in
+// CaptureSettings).
 public sealed class BootloaderCaptureConfig
 {
-    public bool Enabled { get; set; }
     public string? Directory { get; set; }
 }
 
@@ -115,39 +150,21 @@ public sealed class EcuDto
     // defaults).
     public JsonElement? SecurityModuleConfig { get; set; }
 
-    // When true the security module short-circuits $27 to positive responses
-    // regardless of seed/key validation. Models real ECUs whose $27 level is
-    // a stub (T43 TCM is the canonical example). Defaults to false so older
-    // configs and a freshly-created ECU keep the spec-correct challenge.
-    public bool BypassSecurity { get; set; }
-
-    // ISO 15765-2 Flow Control BS/STmin emitted on First Frame reception.
-    // Defaults 0/0 (most permissive). Override to mimic real silicon - e.g.
-    // 6Speed.T43 tester needs BS=1 in the FC tail to recognise the response.
+    // ISO 15765-2 Flow Control BS byte emitted on First Frame reception.
+    // Default 0 (no further FC; send all CFs in one burst). Override to
+    // mimic real silicon - e.g. 6Speed.T43 tester needs BS=1 in the FC
+    // tail to recognise the response.
     public byte FlowControlBlockSize { get; set; }
-    public byte FlowControlSeparationTime { get; set; }
 
     // GMW3110-2010 §8.16 ReportProgrammedState ($A2) byte. Default 0x00
     // (FullyProgrammed) matches a normal running ECU.
     public byte ProgrammedState { get; set; }
 
-    // GMW3110 §8.16 SPS classification. Default A = fully programmed; C
-    // enables the blank-ECU activation flow (silent until $A2 received with
-    // $28 active, then responds on SPS_PrimeRsp $300|DiagnosticAddress).
-    public SpsType SpsType { get; set; } = SpsType.A;
-
-    // 8-bit diagnostic address used to derive SPS_PrimeReq/Rsp for SpsType.C.
-    // Informational for A/B. e.g. $11 -> SPS_PrimeReq $011, SPS_PrimeRsp $311.
+    // 8-bit diagnostic address returned by $1A $B0 (Read ECU Diagnostic
+    // Address). Typically equals the low byte of PhysicalRequestCanId, e.g.
+    // PhysicalRequestCanId = $7E0 -> DiagnosticAddress = $11. Default 0.
     [JsonConverter(typeof(HexByteConverter))]
     public byte DiagnosticAddress { get; set; }
-
-    // Number of bytes in the $36 TransferData startingAddress field.
-    // Spec-permitted values are 2..4. Default 4 matches GMW3110-2010-era
-    // ECUs like the T43 TCM whose kernel destinations (e.g. 0x003FAFE0)
-    // require the full 4 bytes; tools that hardcode 3 will corrupt the
-    // received image. v1-v6 configs deserialise this as 0 (the int default),
-    // which ConfigStore.EcuNodeFrom remaps to 4.
-    public int DownloadAddressByteCount { get; set; } = 4;
 
     public List<PidDto> Pids { get; set; } = new();
 
@@ -180,7 +197,7 @@ public sealed class IdentifierDto
     /// <summary>
     /// Provenance tag - "user" (hand-typed), "bin" (Load Info From Bin),
     /// "auto" (Auto-populate), or "blank" (deliberately empty, sticky).
-    /// Optional in v1-v9 configs; absent → User (the old default before
+    /// Optional in v1-v9 configs; absent -> User (the old default before
     /// source tracking existed).
     /// </summary>
     public DidSource Source { get; set; } = DidSource.User;

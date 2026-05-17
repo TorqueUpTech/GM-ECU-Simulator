@@ -64,7 +64,7 @@ public sealed class RequestDispatcher
     // GetLastError) and the internal connect-time canary handshake.
     private void LogIncoming(byte requestType, ReadOnlySpan<byte> payload)
     {
-        var diag = state.Bus.LogDiagnostic;
+        var diag = state.Bus.LogJ2534;
         if (diag == null) return;
         if (requestType == IpcMessageTypes.ReadMsgsRequest) return;     // host-poll: every ~10–100ms
         if (requestType == IpcMessageTypes.GetLastErrorRequest) return; // follows almost every call
@@ -106,9 +106,9 @@ public sealed class RequestDispatcher
                         try
                         {
                             var m = r.ReadPassThruMsg();
-                            sb.Append($"\n  tx[{i}] proto={m.ProtocolID} flags=0x{(uint)m.TxFlags:X} data({m.Data.Length})={FormatBytes(m.Data, 32)}");
+                            sb.Append($"\ntx[{i}] proto={m.ProtocolID} flags=0x{(uint)m.TxFlags:X} data({m.Data.Length})={FormatBytes(m.Data, 32)}");
                         }
-                        catch { sb.Append($"\n  tx[{i}] <malformed>"); break; }
+                        catch { sb.Append($"\ntx[{i}] <malformed>"); break; }
                     }
                     desc = sb.ToString();
                     break;
@@ -269,7 +269,7 @@ public sealed class RequestDispatcher
         try { state.Bus.RaiseHostConnected(); }
         catch (Exception ex)
         {
-            state.Bus.LogDiagnostic?.Invoke($"[host-connected] subscriber threw: {ex.Message}");
+            state.Bus.LogJ2534?.Invoke($"[host-connected] subscriber threw: {ex.Message}");
         }
         var w = new IpcWriter();
         w.WriteU32((uint)ResultCode.STATUS_NOERROR);
@@ -286,7 +286,7 @@ public sealed class RequestDispatcher
         try { state.Bus.RaiseHostDisconnected(); }
         catch (Exception ex)
         {
-            state.Bus.LogDiagnostic?.Invoke($"[host-disconnected] subscriber threw: {ex.Message}");
+            state.Bus.LogJ2534?.Invoke($"[host-disconnected] subscriber threw: {ex.Message}");
         }
         state.Bus.OnStatusMessage?.Invoke("J2534 host disconnected");
         return (IpcMessageTypes.CloseResponse, OkResultPayload());
@@ -307,7 +307,7 @@ public sealed class RequestDispatcher
         // Other protocols (J1850, ISO9141, KWP2000) are not implemented.
         if (proto != ProtocolID.CAN && proto != ProtocolID.ISO15765)
         {
-            state.Bus.LogDiagnostic?.Invoke(
+            state.Bus.LogJ2534?.Invoke(
                 $"[connect] rejected: protocol {proto} not supported - this shim handles CAN and ISO15765");
             state.Bus.OnStatusMessage?.Invoke(
                 $"Rejected J2534 connect: {proto} not supported");
@@ -412,7 +412,7 @@ public sealed class RequestDispatcher
         w.WriteU32((uint)msgs.Count);
         foreach (var m in msgs) w.WritePassThruMsg(m);
 
-        var readDiag = state.Bus.LogDiagnostic;
+        var readDiag = state.Bus.LogJ2534;
         if (readDiag != null)
         {
             if (msgs.Count > 0)
@@ -423,7 +423,7 @@ public sealed class RequestDispatcher
                 for (int i = 0; i < msgs.Count; i++)
                 {
                     var m = msgs[i];
-                    sb.Append($"\n  rx[{i}] proto={m.ProtocolID} rxst=0x{(uint)m.RxStatus:X} data({m.Data.Length})={FormatBytes(m.Data, 32)}");
+                    sb.Append($"\nrx[{i}] proto={m.ProtocolID} rxst=0x{(uint)m.RxStatus:X} data({m.Data.Length})={FormatBytes(m.Data, 32)}");
                 }
                 readDiag(sb.ToString());
             }
@@ -682,7 +682,7 @@ public sealed class RequestDispatcher
         byte[] frameData = msg.Data;
         bool createTimer = state.Bus.AllowPeriodicTesterPresent;
 
-        var diag = state.Bus.LogDiagnostic;
+        var diag = state.Bus.LogJ2534;
         if (diag != null)
         {
             string canIdStr = frameData.Length >= Core.Transport.CanFrame.IdBytes
@@ -719,7 +719,7 @@ public sealed class RequestDispatcher
             _ = r.ReadU32();             // channelId - unused; we look up by periodicId
             uint periodicId = r.ReadU32();
             state.RemovePeriodicTimer(periodicId);
-            state.Bus.LogDiagnostic?.Invoke($"[periodic] unregister id={periodicId}");
+            state.Bus.LogJ2534?.Invoke($"[periodic] unregister id={periodicId}");
         }
         return (IpcMessageTypes.StopPeriodicResponse, OkResultPayload());
     }

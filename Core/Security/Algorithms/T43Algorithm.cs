@@ -11,13 +11,14 @@ namespace Core.Security.Algorithms;
 // real T43 hardware, so this implementation should match a production ECU
 // step-for-step.
 //
-// Programming-session policy: BypassAll. Real T43 boot block (file offset
-// 0x2BBFC in a 24264923 image) is a permissive $27 stub - it returns seed
-// = 00 00 unconditionally and accepts any key, including the literal 00 00
-// that 6Speed.T43 hardcodes at Program.cs:1122. Once Service10Handler sees
-// $10 $02 and flips ProgrammingModeActive, the generic module short-circuits
-// the algorithm to match. Pre-programming-session $27 (operational mode)
-// still uses gett43key.
+// Programming-session policy: UnchangedAlgorithm. The real T43 boot block's
+// $27 stub is sometimes permissive (returns seed = 00 00 and accepts key
+// 00 00) but not unconditionally - 6Speed.T43's wire flow at Program.cs:1152
+// and 2063 branches: when the bootloader replies with seed 0000 it sends
+// key 0000, otherwise it calls gett43key on the non-zero seed. So the real
+// algorithm runs in programming mode too, and we model that here by leaving
+// the policy at UnchangedAlgorithm. The 0000/0000 happy path is reachable
+// from this module by configuring fixedSeed = "0000".
 //
 // Reference C# code (gett43key, taking a 4-hex-char seed string):
 //     int n = Convert.ToInt32(seedHex, 16);
@@ -47,7 +48,7 @@ public sealed class T43Algorithm : ISeedKeyAlgorithm
     public int SeedLength => 2;
     public int KeyLength => 2;
     public IEnumerable<byte> SupportedLevels { get; } = new byte[] { 1 };
-    public ProgrammingSessionBehavior ProgrammingSession => ProgrammingSessionBehavior.BypassAll;
+    public ProgrammingSessionBehavior ProgrammingSession => ProgrammingSessionBehavior.UnchangedAlgorithm;
 
     public void GenerateSeed(byte level, Span<byte> seedBuffer, out int seedLength)
     {

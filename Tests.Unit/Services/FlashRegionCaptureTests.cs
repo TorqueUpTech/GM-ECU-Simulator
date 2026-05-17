@@ -22,13 +22,17 @@ namespace EcuSimulator.Tests.Services;
 // Service31HandlerTests; this file is the round-trip mirroring + file dump.
 public sealed class FlashRegionCaptureTests
 {
-    private static (VirtualBus bus, EcuNode node, ChannelSession ch) Wire(bool captureOn)
+    private static (VirtualBus bus, EcuNode node, ChannelSession ch) Wire(bool writeToDisk = false)
     {
         var bus = new VirtualBus();
-        bus.Capture.BootloaderCaptureEnabled = captureOn;
+        // Tests that assert on .bin output point CaptureDirectory at a tmp
+        // dir before they need it; the default (null) keeps the writer
+        // silent so other tests don't pollute disk.
+        _ = writeToDisk;
         var node = NodeFactory.CreateNode();
         // Match the powerpcm wire log: kernel sends absolute 4-byte addresses.
-        node.DownloadAddressByteCount = 4;
+        // (4 is the production default; left as an explicit reminder for readers.)
+        node.State.DownloadAddressByteCount = 4;
         // Bring the node up to "post-$27 programming session" without driving
         // the full handler chain - these tests focus on $31/$36/exit wiring,
         // not on the upstream $10/$28/$27/$A5 sequence.
@@ -62,7 +66,7 @@ public sealed class FlashRegionCaptureTests
     [Fact]
     public void Mirror_36_writes_into_matching_erase_region()
     {
-        var (_, node, ch) = Wire(captureOn: true);
+        var (_, node, ch) = Wire();
 
         // $31 erase 256 bytes at 0x001C0000.
         Service31Handler.Handle(node,
@@ -94,7 +98,7 @@ public sealed class FlashRegionCaptureTests
     [Fact]
     public void Write_outside_region_does_not_mirror()
     {
-        var (_, node, ch) = Wire(captureOn: true);
+        var (_, node, ch) = Wire();
 
         // Erase region 0x001C0000 + 0x100.
         Service31Handler.Handle(node,
@@ -127,7 +131,7 @@ public sealed class FlashRegionCaptureTests
         // and assert File.ReadAllBytes(flashFile) == source. The source
         // deliberately includes embedded $FF bytes so a bug that confuses
         // "written" with "still erased" can't masquerade as success.
-        var (bus, node, ch) = Wire(captureOn: true);
+        var (bus, node, ch) = Wire();
         var tmp = Path.Combine(Path.GetTempPath(), "GmEcuSimFlashTest_" + Guid.NewGuid().ToString("N"));
         bus.Capture.CaptureDirectory = tmp;
         var written = new List<string>();
@@ -214,7 +218,7 @@ public sealed class FlashRegionCaptureTests
         // This is the converse of the round-trip test above: it documents
         // what the capture looks like when the source doesn't fill the
         // whole region.
-        var (bus, node, ch) = Wire(captureOn: true);
+        var (bus, node, ch) = Wire();
         var tmp = Path.Combine(Path.GetTempPath(), "GmEcuSimFlashTest_" + Guid.NewGuid().ToString("N"));
         bus.Capture.CaptureDirectory = tmp;
         var written = new List<string>();
@@ -260,7 +264,7 @@ public sealed class FlashRegionCaptureTests
         // The flash-region writer must be inert when the kernel never sent
         // a $31 EraseMemoryByAddress - existing per-$36 capture is the only
         // sink in that case.
-        var (bus, node, ch) = Wire(captureOn: true);
+        var (bus, node, ch) = Wire();
         var tmp = Path.Combine(Path.GetTempPath(), "GmEcuSimFlashTest_" + Guid.NewGuid().ToString("N"));
         bus.Capture.CaptureDirectory = tmp;
         var written = new List<string>();
@@ -279,25 +283,16 @@ public sealed class FlashRegionCaptureTests
     }
 
     [Fact]
-    public void Capture_off_session_end_writes_no_flash_bin()
+    public void No_capture_directory_writes_no_flash_bin_even_with_regions()
     {
-        // Belt and braces: even if a region were somehow recorded with
-        // capture off, the writer's own gate must skip the write so no
-        // file lands on disk.
-        var (bus, node, ch) = Wire(captureOn: false);
-        var tmp = Path.Combine(Path.GetTempPath(), "GmEcuSimFlashTest_" + Guid.NewGuid().ToString("N"));
-        bus.Capture.CaptureDirectory = tmp;
-        // Manually inject a region to simulate the impossible path.
+        // Unit-test default: bus.Capture.CaptureDirectory is null, so the
+        // writer no-ops even when regions exist. Production WPF sets the
+        // directory unconditionally on startup.
+        var (bus, node, ch) = Wire();
+        Assert.Null(bus.Capture.CaptureDirectory);
         node.State.CapturedFlashRegions.Add(new FlashEraseRegion(0x001C0000, 0x100));
 
-        try
-        {
-            EcuExitLogic.Run(node, bus.Scheduler, ch);
-            Assert.False(Directory.Exists(tmp));
-        }
-        finally
-        {
-            if (Directory.Exists(tmp)) Directory.Delete(tmp, recursive: true);
-        }
+        // No throw, no disk side effects - the no-dir early-return path.
+        EcuExitLogic.Run(node, bus.Scheduler, ch);
     }
 }

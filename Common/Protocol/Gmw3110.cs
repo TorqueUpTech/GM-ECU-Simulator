@@ -22,6 +22,7 @@ public static class Service
     public const byte ReportProgrammedState = 0xA2;           // $A2 - SPS programmed-state query (§8.16)
     public const byte ProgrammingMode = 0xA5;                 // $A5 - enter programming session (§8.17)
     public const byte ReadDataByPacketIdentifier = 0xAA;      // $AA - periodic DPID
+    public const byte RequestDeviceControl = 0xAE;            // $AE - CPID-based device control (§8.21)
 
     // Positive response = request + 0x40
     public const byte NegativeResponse = 0x7F;
@@ -108,26 +109,4 @@ public static class GmlanCanId
 
     public static ushort SpsPrimeRequest(byte diagAddress)  => (ushort)(SpsPrimeRequestBase | diagAddress);
     public static ushort SpsPrimeResponse(byte diagAddress) => (ushort)(SpsPrimeResponseBase | diagAddress);
-}
-
-/// <summary>
-/// GMW3110 §8.16 / §9.x classification of an ECU's programmability state at
-/// boot. The simulator uses this to gate the SPS_PrimeReq/Rsp activation flow
-/// that GM SPS / DPS drives during "Get Controller Info" / programming setup.
-/// </summary>
-///   <c>A</c>: fully programmed, permanent diagnostic CAN IDs in flash. Default;
-///            responds normally on its USDT response ID at all times.
-///   <c>B</c>: missing op-software or calibration, but permanent CAN IDs ARE
-///            stored in flash. Same wire behaviour as A; the distinction is
-///            informational (real ECUs report a different programmedState).
-///   <c>C</c>: blank/unprogrammed. No permanent CAN IDs. Silent on every request
-///            until receiving $A2 while $28 DisableNormalCommunication is active;
-///            then enables diagnostic responses, replies on SPS_PrimeRsp
-///            ($300 | diag_address), and subsequently honours SPS_PrimeReq
-///            ($000 | diag_address) until $20 / P3C timeout reverts to silent.
-public enum SpsType : byte
-{
-    A = 0,
-    B = 1,
-    C = 2,
 }

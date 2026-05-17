@@ -36,8 +36,94 @@
 #include <cstdio>
 #include <vector>
 #include <cstring>
+#include <mutex>
 
 // ---------------- helpers ----------------
+
+// Per-process file log. Lazily opened on the first DebugLog() call into
+// %LOCALAPPDATA%\GmEcuSimulator\shim logs\shim_<bitness>_<ts>.log so
+// each host-process load lands as its own file. Sibling of the simulator's
+// bus_*.csv logs (which live under \logs\) - kept at the same depth rather
+// than nested under \logs\ because these come from a different process
+// entirely (the J2534 host, not the sim) and are tracked separately. The
+// mutex protects the {FILE*, open-attempt-flag, path-buffer} trio against
+// the multi-threaded hosts (DPS, Tech 2 Win, etc.) that drive PassThru*
+// concurrently. The existing OutputDebugStringA path stays - the file log
+// is additive.
+static std::mutex g_logFileMutex;
+static FILE* g_logFile = nullptr;
+static bool g_logFileOpenAttempted = false;
+static char g_logFilePath[MAX_PATH] = { 0 };
+
+static void OpenLogFileIfNeeded()
+{
+    // Called under g_logFileMutex. Open is one-shot per process - if path
+    // resolution or fopen fails we set the attempted flag and never retry,
+    // so a misconfigured env doesn't waste time on every DebugLog call.
+    if (g_logFileOpenAttempted) return;
+    g_logFileOpenAttempted = true;
+
+    char appdata[MAX_PATH];
+    if (GetEnvironmentVariableA("LOCALAPPDATA", appdata, MAX_PATH) == 0) return;
+
+    char dir[MAX_PATH];
+    int n = snprintf(dir, MAX_PATH, "%s\\GmEcuSimulator", appdata);
+    if (n < 0 || n >= MAX_PATH) return;
+    CreateDirectoryA(dir, NULL);
+
+    n = snprintf(dir, MAX_PATH, "%s\\GmEcuSimulator\\shim logs", appdata);
+    if (n < 0 || n >= MAX_PATH) return;
+    CreateDirectoryA(dir, NULL);
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+#if defined(_WIN64)
+    const char* bitness = "64";
+#else
+    const char* bitness = "32";
+#endif
+
+    n = snprintf(g_logFilePath, MAX_PATH,
+                 "%s\\shim_%s_%04u%02u%02u_%02u%02u%02u.log",
+                 dir, bitness,
+                 st.wYear, st.wMonth, st.wDay,
+                 st.wHour, st.wMinute, st.wSecond);
+    if (n < 0 || n >= MAX_PATH) return;
+
+    if (fopen_s(&g_logFile, g_logFilePath, "wb") != 0 || g_logFile == nullptr)
+    {
+        g_logFile = nullptr;
+        return;
+    }
+
+    fprintf(g_logFile, "# PassThruShim%s debug log\r\n", bitness);
+    fprintf(g_logFile,
+            "# Started:  %04u-%02u-%02u %02u:%02u:%02u (local)\r\n",
+            st.wYear, st.wMonth, st.wDay,
+            st.wHour, st.wMinute, st.wSecond);
+    fprintf(g_logFile, "# Path:     %s\r\n", g_logFilePath);
+    fprintf(g_logFile, "# Host PID: %lu\r\n\r\n", GetCurrentProcessId());
+    fflush(g_logFile);
+}
+
+// Called from dllmain.cpp on DLL_PROCESS_DETACH. Safe to call even when the
+// file was never opened. Not declared static so DllMain can forward-declare
+// it without a separate header.
+extern "C" void Shim_CloseDebugLog()
+{
+    std::lock_guard<std::mutex> lock(g_logFileMutex);
+    if (g_logFile)
+    {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fprintf(g_logFile,
+                "\r\n# Closed:   %04u-%02u-%02u %02u:%02u:%02u (local)\r\n",
+                st.wYear, st.wMonth, st.wDay,
+                st.wHour, st.wMinute, st.wSecond);
+        fclose(g_logFile);
+        g_logFile = nullptr;
+    }
+}
 
 static void DebugLog(const char* fmt, ...)
 {
@@ -46,9 +132,24 @@ static void DebugLog(const char* fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+
+    // Existing dbg-output path - reaches DebugView, Visual Studio Output, etc.
     OutputDebugStringA("[PassThruShim] ");
     OutputDebugStringA(buf);
     OutputDebugStringA("\n");
+
+    // File log path. Held under the mutex from open-check through write so
+    // a teardown thread can't fclose the handle mid-fprintf.
+    std::lock_guard<std::mutex> lock(g_logFileMutex);
+    OpenLogFileIfNeeded();
+    if (g_logFile)
+    {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fprintf(g_logFile, "[%02u:%02u:%02u.%03u] %s\r\n",
+                st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, buf);
+        fflush(g_logFile);
+    }
 }
 
 // Format up to `cap` bytes as space-separated uppercase hex into `dst`.

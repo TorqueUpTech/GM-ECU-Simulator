@@ -5,6 +5,7 @@
         xmlns:views="clr-namespace:GmEcuSimulator.Views"
         xmlns:sys="clr-namespace:System;assembly=mscorlib"
         xmlns:glitch="clr-namespace:Common.Glitch;assembly=EcuSim.Common"
+        xmlns:common="clr-namespace:Common;assembly=EcuSim.Common"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:av="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="av" x:Class="GmEcuSimulator.MainWindow"
         Title="{Binding WindowTitle, FallbackValue=GM ECU Simulator}"
@@ -14,8 +15,9 @@
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
-        <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
-        <conv:StatusToBrushConverter    x:Key="StatusToBrush"/>
+        <conv:BoolToVisibilityConverter  x:Key="BoolToVis"/>
+        <conv:StatusToBrushConverter     x:Key="StatusToBrush"/>
+        <conv:AppModeDisplayConverter    x:Key="AppModeDisplay"/>
 
         <!--
             Validation error template. Draws a 1px red border around the
@@ -94,25 +96,56 @@
                            VerticalAlignment="Center"/>
             </StackPanel>
 
-            <!-- Centre: J2534 status pill (live, accent-coloured dot + text) -->
-            <Border Grid.Column="2" CornerRadius="11"
-                    Background="{DynamicResource Bg.SurfaceBrush}"
-                    BorderBrush="{DynamicResource Border.SubtleBrush}"
-                    BorderThickness="1"
-                    Padding="10,3" Margin="0,0,12,0"
-                    VerticalAlignment="Center"
-                    WindowChrome.IsHitTestVisibleInChrome="True"
-                    ToolTip="J2534 device registration state (HKLM\SOFTWARE\PassThruSupport.04.04\GmEcuSim)">
-                <StackPanel Orientation="Horizontal">
-                    <Ellipse Width="8" Height="8" Margin="0,0,8,0"
-                             Fill="{Binding J2534Status, Converter={StaticResource StatusToBrush}}"
-                             VerticalAlignment="Center"/>
-                    <TextBlock Text="{Binding J2534Status}"
-                               Style="{StaticResource Text.Caption}"
-                               Foreground="{DynamicResource Text.PrimaryBrush}"
-                               VerticalAlignment="Center"/>
-                </StackPanel>
-            </Border>
+            <!-- Centre: status pills. Security state of the selected ECU
+                 (left) + J2534 device registration state (right). -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+
+                <!-- Selected-ECU security pill: only renders when an ECU is
+                     selected. Text comes from EcuViewModel.SecurityStatusText
+                     which the main refresh tick updates 10x/sec, so it stays
+                     in sync with $27 traffic without extra wiring. -->
+                <Border CornerRadius="11"
+                        Background="{DynamicResource Bg.SurfaceBrush}"
+                        BorderBrush="{DynamicResource Border.SubtleBrush}"
+                        BorderThickness="1"
+                        Padding="10,3" Margin="0,0,8,0"
+                        VerticalAlignment="Center"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        DataContext="{Binding SelectedEcu}"
+                        Visibility="{Binding ConverterParameter=NotNull, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}"
+                        ToolTip="$27 SecurityAccess state of the selected ECU. Green = unlocked, amber = locked, red = lockout in effect.">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Margin="0,0,8,0"
+                                 Fill="{Binding SecurityStatusText, Converter={StaticResource StatusToBrush}}"
+                                 VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding SecurityPillText}"
+                                   Style="{StaticResource Text.Caption}"
+                                   Foreground="{DynamicResource Text.PrimaryBrush}"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- J2534 status pill (live, accent-coloured dot + text) -->
+                <Border CornerRadius="11"
+                        Background="{DynamicResource Bg.SurfaceBrush}"
+                        BorderBrush="{DynamicResource Border.SubtleBrush}"
+                        BorderThickness="1"
+                        Padding="10,3" Margin="0,0,12,0"
+                        VerticalAlignment="Center"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        ToolTip="J2534 device registration state (HKLM\SOFTWARE\PassThruSupport.04.04\GmEcuSim)">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Margin="0,0,8,0"
+                                 Fill="{Binding J2534Status, Converter={StaticResource StatusToBrush}}"
+                                 VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding J2534Status}"
+                                   Style="{StaticResource Text.Caption}"
+                                   Foreground="{DynamicResource Text.PrimaryBrush}"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
 
             <!-- Right: window controls -->
             <StackPanel Grid.Column="3" Orientation="Horizontal">
@@ -147,13 +180,23 @@
             </StackPanel>
         </Grid>
 
-        <!-- MENU BAR -->
+        <!-- MENU BAR + MODE SELECTOR.
+             Menu items flow from the left; the top-level mode selector
+             (DPS Write / DPS Read / Flash Tool Write / Flash Tool Read /
+             ECU Simulator) is pinned to the right edge so the user can see
+             at a glance which world they're in. Mode scopes single-vs-multi-
+             ECU, per-mode persistence, and which tabs surface below. -->
         <Border DockPanel.Dock="Top"
                 Background="{DynamicResource Bg.BaseBrush}"
                 BorderBrush="{DynamicResource Border.SubtleBrush}"
                 BorderThickness="0,0,0,1"
                 WindowChrome.IsHitTestVisibleInChrome="True">
-            <Menu Padding="6,2" Background="Transparent">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Menu Grid.Column="0" Padding="6,2" Background="Transparent">
                 <MenuItem Header="_File">
                     <MenuItem Header="_New"      Command="{Binding NewCommand}"    InputGestureText="Ctrl+N"/>
                     <MenuItem Header="_Open…"    Command="{Binding OpenCommand}"   InputGestureText="Ctrl+O"/>
@@ -163,6 +206,10 @@
                     <Separator/>
                     <MenuItem Header="_Import…"  Command="{Binding ImportCommand}"/>
                     <MenuItem Header="_Export…"  Command="{Binding ExportCommand}"/>
+                    <Separator Visibility="{Binding ShowsPrimeMenu, Converter={StaticResource BoolToVis}}"/>
+                    <MenuItem Header="C_lear primed archive"    Command="{Binding ClearPrimeArchiveCommand}"
+                              Visibility="{Binding ShowsPrimeMenu, Converter={StaticResource BoolToVis}}"
+                              ToolTip="Forget the persisted prime path. Does not remove ECUs from the current bus."/>
                     <Separator/>
                     <MenuItem Header="E_xit"     Click="OnExitClicked"/>
                 </MenuItem>
@@ -183,18 +230,23 @@
                               ToolTip="Stop and restart the \\.\pipe\GmEcuSim.PassThru server. Any connected host sees a broken pipe on its next call; new PassThruOpen calls succeed again. No UAC."/>
                 </MenuItem>
                 <MenuItem Header="_ECU">
-                    <MenuItem Header="_Add"     Command="{Binding AddEcuCommand}"/>
-                    <MenuItem Header="_Remove"  Command="{Binding RemoveEcuCommand}"/>
-                    <Separator/>
-                    <MenuItem Header="Load info from BIN..."
-                              Command="{Binding LoadEcuFromBinCommand}"
-                              ToolTip="Pick a .bin (full-flash dump) and populate the selected ECU's GMW3110 identity DIDs ($90 VIN, $92/$98 HW, $C1/$C2 P/N, $CC diag addr) from offsets located in the bin. Currently a scaffold - the extractor is not wired up yet."/>
+                    <MenuItem Header="Reset _state"
+                              Command="{Binding ResetStateCommand}"
+                              ToolTip="Power-cycle every ECU: clears the programming session, security unlock, download buffer, and DPID schedules. Equivalent to $20 ReturnToNormalMode + full $27 re-lock applied to each ECU on the bus."/>
                     <Separator/>
                     <MenuItem Header="Drive HW _$3E keepalives"
                               IsCheckable="True"
                               StaysOpenOnClick="True"
                               IsChecked="{Binding AllowPeriodicTesterPresent, Mode=TwoWay}"
                               ToolTip="When on, the simulator drives $3E TesterPresent on the host's behalf for any frame registered via PassThruStartPeriodicMsg. Off accepts the registration but skips the tick - delegating hosts have to keep their own P3C session alive."/>
+                </MenuItem>
+                <MenuItem Header="_Bin">
+                    <MenuItem Header="_Load info from BIN..."
+                              Command="{Binding SelectedEcu.LoadInfoFromBinCommand}"
+                              ToolTip="Pick a T43/E38/E67 flash image and populate the selected ECU's $1A DIDs by tracing the $1A handler. Walks the dispatcher to find each supported DID's source flash address - no per-family hardcoding. Precedence-aware: DIDs already set by the user or a prior auto-populate are kept."/>
+                    <MenuItem Header="_Auto-populate DIDs"
+                              Command="{Binding SelectedEcu.AutoPopulateDidsCommand}"
+                              ToolTip="Fill every well-known $1A DID on the selected ECU that is currently unset with a placeholder byte sequence (DefaultDidValues). Gets a fresh ECU 'plausible enough' for a tester in one click. DIDs already populated by the user or a prior bin load are left alone."/>
                 </MenuItem>
                 <MenuItem Header="_Log">
                     <!-- Master gate. When unchecked, the four items below grey
@@ -207,7 +259,7 @@
                               IsCheckable="True"
                               StaysOpenOnClick="True"
                               IsChecked="{Binding IsFileLoggingEnabled, Mode=TwoWay}"
-                              ToolTip="Stream every bus + diagnostic line to %LOCALAPPDATA%\GmEcuSimulator\logs\bus_*.csv on a dedicated background thread. Independent of the 'Log traffic' textbox gate - use when high-volume downloads make the textbox impractical."/>
+                              ToolTip="Stream every bus + diagnostic line to %LOCALAPPDATA%\GmEcuSimulator\bus logs\bus_*.csv on a dedicated background thread. Independent of the 'Log traffic' textbox gate - use when high-volume downloads make the textbox impractical."/>
                     <MenuItem Header="_Open folder…"
                               Click="OnOpenLogFolderClicked"
                               IsEnabled="{Binding IsFileLoggingEnabled}"
@@ -248,6 +300,40 @@
                               ToolTip="Switch the colour palette. Drop your own .xaml palette into %APPDATA%\GmEcuSimulator\Palettes\ to see it listed here."/>
                 </MenuItem>
             </Menu>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,12,0">
+                    <TextBlock Text="Mode"
+                               Style="{StaticResource Text.Caption}"
+                               Foreground="{DynamicResource Text.SecondaryBrush}"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"/>
+                    <ComboBox Width="180"
+                              ItemsSource="{Binding AvailableModes}"
+                              SelectedItem="{Binding CurrentMode, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              ToolTip="Top-level mode. Switching clears the current ECU set; you'll be offered a save first when leaving a persistable mode.">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Converter={StaticResource AppModeDisplay}}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                        <!-- Read-only modes (DpsRead / FlashToolRead) aren't
+                             wired up yet; keep them visible-but-disabled so the
+                             dropdown still telegraphs the planned scope. -->
+                        <ComboBox.ItemContainerStyle>
+                            <Style TargetType="ComboBoxItem">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding}" Value="{x:Static common:AppMode.DpsRead}">
+                                        <Setter Property="IsEnabled" Value="False"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding}" Value="{x:Static common:AppMode.FlashToolRead}">
+                                        <Setter Property="IsEnabled" Value="False"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ComboBox.ItemContainerStyle>
+                    </ComboBox>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <!-- STATUS BAR (bottom) -->
@@ -258,6 +344,9 @@
             </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right">
                 <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding PrimeArchiveDisplay}" Style="{StaticResource Text.MonoDim}"
+                               VerticalAlignment="Center" Margin="0,0,12,0"
+                               ToolTip="Active Prime-From-Archive state. Set via the ECUs pane's Add button in DPS modes."/>
                     <TextBlock Text="Pipe" Style="{StaticResource Text.Caption}" Margin="0,0,6,0"
                                VerticalAlignment="Center"/>
                     <TextBlock Text="\\.\pipe\GmEcuSim.PassThru" Style="{StaticResource Text.MonoDim}"
@@ -277,12 +366,12 @@
             <Grid.RowDefinitions>
                 <!-- EditorRow MinHeight is the editor area's floor when the
                      user drags the horizontal splitter up. Floor budget:
-                     card chrome + Selected-ECU title + 1 form row + $1A
-                     DataGrid MinHeight + buttons. Maximize toggles it to 0
-                     from code-behind so the row can fully collapse - the
-                     constant in MainWindow.xaml.cs (EditorMinHeightNormal)
-                     restores it and must stay in sync with this value. -->
-                <RowDefinition x:Name="EditorRow" Height="*" MinHeight="240"/>
+                     card chrome + Selected-ECU title + ~2 form rows in the
+                     WrapPanel ScrollViewer. Maximize toggles it to 0 from
+                     code-behind so the row can fully collapse - the constant
+                     in MainWindow.xaml.cs (EditorMinHeightNormal) restores
+                     it and must stay in sync with this value. -->
+                <RowDefinition x:Name="EditorRow" Height="*" MinHeight="140"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition x:Name="LogRow"    Height="320" MinHeight="80"/>
             </Grid.RowDefinitions>
@@ -309,7 +398,10 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <!-- Header -->
+                        <!-- Header: title + Add/Remove. In DPS modes the Add
+                             button routes through AddEcu -> PrimeFromArchive
+                             (see MainViewModel.AddEcu); CanAddEcu enforces the
+                             single-ECU limit, so Add disables once one exists. -->
                         <Grid Grid.Row="0" Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -317,6 +409,28 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="ECUs" Style="{StaticResource Text.SectionHeader}"
                                        Margin="0" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Width="28" Height="22" Padding="0" Margin="0,0,8,0"
+                                        Command="{Binding AddEcuCommand}"
+                                        ToolTip="ECU Simulator: insert a blank ECU at the next free OBD-II ID. DPS modes: open the Prime wizard (only one primed ECU is allowed).">
+                                    <!-- Plus glyph: 10x10 viewport, centred cross. -->
+                                    <Path Data="M 0,5 L 10,5 M 5,0 L 5,10"
+                                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                          StrokeThickness="1.4"
+                                          Width="10" Height="10"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Button>
+                                <Button Width="28" Height="22" Padding="0"
+                                        Command="{Binding RemoveEcuCommand}"
+                                        ToolTip="Remove the selected ECU from the bus.">
+                                    <!-- Minus glyph: matching 10x10 viewport. -->
+                                    <Path Data="M 0,5 L 10,5"
+                                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                          StrokeThickness="1.4"
+                                          Width="10" Height="10"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Button>
+                            </StackPanel>
                         </Grid>
 
                         <!-- Scrollable ECU list -->
@@ -335,9 +449,10 @@
                      window. WrapPanel inside the ScrollViewer lets each
                      field cell (fixed 280px) flow into multiple columns
                      when the column is wide and collapse to one when it
-                     shrinks. Load-from-bin button sits below the WrapPanel
-                     as a full-width footer so it never gets stranded next
-                     to a half-empty row. -->
+                     shrinks. Bin-related actions (Load Info From Bin /
+                     Auto-populate DIDs) moved out to the top-level Bin
+                     menu; the in-card $1A Identifiers grid was retired
+                     with them. -->
                 <Border Grid.Column="1" Style="{StaticResource Card}"
                         DataContext="{Binding SelectedEcu}"
                         Visibility="{Binding ConverterParameter=NotNull, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
@@ -346,6 +461,7 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="Selected ECU"
                                            Style="{StaticResource Text.Subtitle}"
@@ -355,35 +471,15 @@
                                            Style="{StaticResource Text.Caption}"
                                            VerticalAlignment="Center"
                                            Margin="12,0,0,0"/>
+                                <Button Grid.Column="2"
+                                        Content="Edit prime..."
+                                        Padding="10,4"
+                                        Command="{Binding EditPrimeCommand}"
+                                        Visibility="{Binding IsPrimed, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed, TargetNullValue=Collapsed}"
+                                        ToolTip="Re-open the DPS Prime Wizard with this ECU's prior selections pre-filled. Replaces the ECU atomically on Apply."/>
                             </Grid>
 
-                            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,10,0,0">
-                                <Button Content="Load Info From Bin..."
-                                        Command="{Binding LoadInfoFromBinCommand}"
-                                        ToolTip="Pick a T43/E38/E67 flash image and populate the DID fields by tracing the $1A handler. Walks the dispatcher to find each supported DID's source flash address - no per-family hardcoding. Precedence-aware: DIDs already set by the user or a prior auto-populate are kept."/>
-                                <Button Content="Auto-populate DIDs"
-                                        Command="{Binding AutoPopulateDidsCommand}"
-                                        Margin="8,0,0,0"
-                                        ToolTip="Fill every well-known $1A DID that is currently unset with a placeholder byte sequence (DefaultDidValues). Gets a fresh ECU 'plausible enough' for a tester in one click. DIDs already populated by the user or a prior bin load are left alone."/>
-                            </StackPanel>
-
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <!-- Both rows Star so Row 1's MinHeight is honoured
-                                         (Star MinHeight wins against another Star, but loses
-                                         to an Auto row, which would clip the DataGrid).
-                                         Row 0 MaxHeight=120 is sized to the form's natural
-                                         4-column height (3 rows of cells) so the form fits
-                                         without much empty space at wide window widths;
-                                         narrower windows where the form wraps to fewer
-                                         columns and asks for more height fall back to the
-                                         ScrollViewer. Row 1 absorbs all space above the cap. -->
-                                    <RowDefinition Height="*" MaxHeight="140"/>
-                                    <RowDefinition Height="*" MinHeight="100"/>
-                                </Grid.RowDefinitions>
-
-                                <ScrollViewer Grid.Row="0"
-                                              VerticalScrollBarVisibility="Auto"
+                                <ScrollViewer VerticalScrollBarVisibility="Auto"
                                               HorizontalScrollBarVisibility="Disabled">
                                     <WrapPanel Orientation="Horizontal">
                                     <WrapPanel.Resources>
@@ -449,45 +545,7 @@
                                         <TextBox Grid.Column="1" Margin="0,2"
                                                  Text="{Binding FlowControlBlockSizeHex, UpdateSourceTrigger=LostFocus}"
                                                  FontFamily="{StaticResource Font.Mono}"
-                                                 ToolTip="ISO 15765-2 FlowControl BlockSize byte (FC.BS). 0 = send all CFs without further FC. Set to 1 to match real T43 (FC = 30 01 00)."/>
-                                    </Grid>
-
-                                    <Grid Style="{StaticResource FormCell}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="96"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="FC.STmin"/>
-                                        <TextBox Grid.Column="1" Margin="0,2"
-                                                 Text="{Binding FlowControlSeparationTimeHex, UpdateSourceTrigger=LostFocus}"
-                                                 FontFamily="{StaticResource Font.Mono}"
-                                                 ToolTip="ISO 15765-2 FlowControl SeparationTime byte (FC.STmin). 0 = no inter-frame delay. Values 1..7F = N ms, F1..F9 = 100..900 us."/>
-                                    </Grid>
-
-                                    <Grid Style="{StaticResource FormCell}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="96"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="$36 addr"/>
-                                        <ComboBox Grid.Column="1" Margin="0,2"
-                                                  ItemsSource="{Binding DownloadAddressByteCountOptions}"
-                                                  SelectedItem="{Binding DownloadAddressByteCount}"
-                                                  FontFamily="{StaticResource Font.Mono}"
-                                                  ToolTip="Number of bytes in the $36 TransferData startingAddress field. GMW3110 permits 2..4. T43-era ECUs use 4; 3 only fits up to 16 MiB and corrupts the captured image if the host sends a 4-byte address."/>
-                                    </Grid>
-
-                                    <Grid Style="{StaticResource FormCell}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="96"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="SPS type"/>
-                                        <ComboBox Grid.Column="1" Margin="0,2"
-                                                  ItemsSource="{Binding SpsTypeOptions}"
-                                                  SelectedItem="{Binding SpsType}"
-                                                  FontFamily="{StaticResource Font.Mono}"
-                                                  ToolTip="GMW3110 §8.16 SPS classification. A = fully programmed (default, responds on the configured USDT response ID). B = missing op-sw/cal but permanent CAN IDs in flash (same wire behaviour as A). C = blank/unprogrammed; silent until $A2 received while $28 active, then responds on SPS_PrimeRsp ($300|Diag addr). For type C, also set Req CAN = $000|addr and USDT resp = $300|addr."/>
+                                                 ToolTip="ISO 15765-2 FlowControl BlockSize (FC.BS). When this ECU receives a First Frame, it replies with FC = 30 BS 00. BS tells the tester how many Consecutive Frames to send before waiting for another FC: 0 = send all CFs in one burst (most permissive, works with most hosts); 1 = send 1 CF then wait for another FC, etc. Set BS=1 for the 6Speed.T43 tester - it sniffs the FC tail for the pattern '01' to recognise a T43 TCM and won't start the kernel upload otherwise."/>
                                     </Grid>
 
                                     <Grid Style="{StaticResource FormCell}">
@@ -503,7 +561,8 @@
                                                  ToolTip="GMW3110 8-bit diagnostic address. For SPS type C this is the byte that derives SPS_PrimeReq ($000|addr) and SPS_PrimeRsp ($300|addr). e.g. $11 -> req $011, resp $311. Informational for type A/B (their CAN IDs are explicit)."/>
                                     </Grid>
 
-                                    <Grid Style="{StaticResource FormCell}">
+                                    <Grid Style="{StaticResource FormCell}"
+                                          Visibility="{Binding DataContext.ShowsSecurityModuleField, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="96"/>
                                             <ColumnDefinition Width="*"/>
@@ -513,46 +572,12 @@
                                                   ItemsSource="{Binding AvailableSecurityModuleIds}"
                                                   SelectedItem="{Binding SelectedSecurityModuleId}"
                                                   FontFamily="{StaticResource Font.Mono}"
+                                                  Height="40"
                                                   ToolTip="Seed/key algorithm for this ECU. (none) makes $27 return NRC $11. Runtime state (lock status, attempts, pending seed) lives on the Security tab."/>
                                     </Grid>
 
                                 </WrapPanel>
                                 </ScrollViewer>
-
-                                <!-- Generic $1A Identifiers grid. Lifted out of the form
-                                     WrapPanel so it can fill remaining vertical space in
-                                     the card (Row 1 = *). All well-known DIDs are
-                                     pre-populated as rows; leave Value blank to keep a
-                                     DID unconfigured ($1A returns NRC $31 for it). -->
-                                <DockPanel Grid.Row="1" LastChildFill="True" Margin="0,12,0,4">
-                                    <TextBlock DockPanel.Dock="Top"
-                                               Text="$1A Identifiers"
-                                               Style="{StaticResource Text.Caption}"
-                                               Margin="0,0,0,4"/>
-                                    <DataGrid ItemsSource="{Binding Identifiers}"
-                                              AutoGenerateColumns="False"
-                                              CanUserAddRows="False"
-                                              CanUserDeleteRows="False"
-                                              HeadersVisibility="Column"
-                                              GridLinesVisibility="Horizontal"
-                                              MinHeight="75"
-                                              FontFamily="{StaticResource Font.Mono}">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="DID" Width="60" IsReadOnly="True"
-                                                                Binding="{Binding DidHex}"/>
-                                            <DataGridTextColumn Header="Name" Width="200" IsReadOnly="True"
-                                                                Binding="{Binding Name}"/>
-                                            <DataGridTextColumn Header="Source" Width="60" IsReadOnly="True"
-                                                                Binding="{Binding SourceLabel}"
-                                                                ToolTipService.ToolTip="Where this DID's current value came from. user = typed in the grid (sticky even after blanking). bin = Load Info From Bin. auto = Auto-populate. - = never touched. In Replace-all bin load, every well-known DID is tagged bin even if the bin had nothing for it."/>
-                                            <DataGridCheckBoxColumn Header="Hex" Width="40"
-                                                                    Binding="{Binding IsHex, UpdateSourceTrigger=PropertyChanged}"/>
-                                            <DataGridTextColumn Header="Value" Width="*"
-                                                                Binding="{Binding Value, UpdateSourceTrigger=LostFocus}"/>
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                </DockPanel>
-                            </Grid>
                         </DockPanel>
                     </Border>
             </Grid>
@@ -698,335 +723,19 @@
                             </Grid>
                         </DockPanel>
                     </TabItem>
+<!-- (Download tab removed) -->
 
-                    <!-- Download workspace tab.
-                         Live monitor of the GMW3110 programming-flow state for
-                         the ECU currently selected in the sidebar. Each step
-                         is a traffic light (red = precondition not met, amber
-                         = next required step, green = satisfied). The TX / RX
-                         log mirrors the bus-log content; the master toggle is
-                         shared with the Bus log tab via IsLoggingEnabled. -->
-                    <TabItem Header="Download">
-                        <DockPanel DataContext="{Binding DownloadWorkspace}" LastChildFill="True">
-                            <Border DockPanel.Dock="Top" Style="{StaticResource Toolbar}">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="ECU"
-                                               Style="{StaticResource Text.Caption}"
-                                               VerticalAlignment="Center"
-                                               Margin="0,0,8,0"/>
-                                    <TextBlock Text="{Binding EcuName}"
-                                               Style="{StaticResource Text.Body}"
-                                               FontWeight="SemiBold"
-                                               VerticalAlignment="Center"/>
-                                    <Button Content="Reset ECU state"
-                                            Margin="14,0,0,0"
-                                            Style="{StaticResource Button.Ghost}"
-                                            Command="{Binding ResetEcuStateCommand}"
-                                            ToolTip="Equivalent to $20 ReturnToNormalMode: clears the programming session, security unlock, and download buffer. Fires the unsolicited $60 if a host channel is still active."/>
-                                    <Rectangle Width="1" Margin="16,3" Fill="{DynamicResource Border.SubtleBrush}"/>
-                                    <CheckBox Content="Log traffic"
-                                              IsChecked="{Binding DataContext.IsLoggingEnabled, RelativeSource={RelativeSource AncestorType={x:Type Window}}, Mode=TwoWay}"
-                                              VerticalAlignment="Center"
-                                              ToolTip="Shared toggle with the Bus log tab. Mirrors all CAN frames + J2534 calls into the panel below."/>
-                                    <Button Content="Clear" Click="OnDownloadClearLogClicked"
-                                            Margin="16,0,0,0"/>
-                                    <Rectangle Width="1" Margin="12,4" Fill="{DynamicResource Border.SubtleBrush}"/>
-                                    <CheckBox Content="Maximize"
-                                              IsChecked="{Binding DataContext.IsMaximized, RelativeSource={RelativeSource AncestorType={x:Type Window}}, Mode=TwoWay}"
-                                              VerticalAlignment="Center"
-                                              ToolTip="Collapse the ECU/PID editor and fill the window with the workspace tabs. Shared with the Bus log tab's Maximize toggle."/>
-                                </StackPanel>
-                            </Border>
-
-                            <!-- Bottom status line: human-readable description of the
-                                 current required step or the completion state. -->
-                            <Border DockPanel.Dock="Bottom"
-                                    Background="{DynamicResource Bg.BaseBrush}"
-                                    BorderBrush="{DynamicResource Border.SubtleBrush}"
-                                    BorderThickness="0,1,0,0"
-                                    Padding="14,6">
-                                <TextBlock Text="{Binding StatusLine}"
-                                           Style="{StaticResource Text.Caption}"
-                                           Foreground="{DynamicResource Text.PrimaryBrush}"/>
-                            </Border>
-
-                            <!-- Two-column split: traffic-light tree (left) + tx/rx log (right). -->
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="280" MinWidth="280"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-
-                                <!-- Traffic-light tree.
-                                     Each row: coloured Ellipse + label + optional sub-text.
-                                     A 1px Rectangle between rows acts as the connector. -->
-                                <Border Grid.Column="0" Padding="18,14"
-                                        BorderBrush="{DynamicResource Border.SubtleBrush}"
-                                        BorderThickness="0,0,1,0">
-                                    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                                                  HorizontalScrollBarVisibility="Disabled">
-                                        <StackPanel>
-                                            <TextBlock Text="ENTRY SEQUENCE"
-                                                       Style="{StaticResource Text.SectionHeader}"
-                                                       Margin="0,0,0,10"/>
-
-                                            <!-- $28 -->
-                                            <Grid Margin="0,3">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-                                                <Ellipse Grid.Column="0" Width="14" Height="14" Margin="0,0,12,0"
-                                                         VerticalAlignment="Center"
-                                                         Fill="{Binding Brush28}"/>
-                                                <TextBlock Grid.Column="1"
-                                                           Text="$28 DisableNormalCommunication"
-                                                           Style="{StaticResource Text.Body}"
-                                                           Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                           VerticalAlignment="Center"/>
-                                            </Grid>
-                                            <Rectangle Width="1" Height="10" Margin="6,0"
-                                                       HorizontalAlignment="Left"
-                                                       Fill="{DynamicResource Border.SubtleBrush}"/>
-
-                                            <!-- $A5/01 -->
-                                            <Grid Margin="0,3">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-                                                <Ellipse Grid.Column="0" Width="14" Height="14" Margin="0,0,12,0"
-                                                         VerticalAlignment="Center"
-                                                         Fill="{Binding BrushA5Req}"/>
-                                                <TextBlock Grid.Column="1"
-                                                           Text="$A5 / $01 RequestProgrammingMode"
-                                                           Style="{StaticResource Text.Body}"
-                                                           Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                           VerticalAlignment="Center"/>
-                                            </Grid>
-                                            <Rectangle Width="1" Height="10" Margin="6,0"
-                                                       HorizontalAlignment="Left"
-                                                       Fill="{DynamicResource Border.SubtleBrush}"/>
-
-                                            <!-- $A5/03 -->
-                                            <Grid Margin="0,3">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-                                                <Ellipse Grid.Column="0" Width="14" Height="14" Margin="0,0,12,0"
-                                                         VerticalAlignment="Center"
-                                                         Fill="{Binding BrushA5Enable}"/>
-                                                <TextBlock Grid.Column="1"
-                                                           Text="$A5 / $03 EnableProgrammingMode"
-                                                           Style="{StaticResource Text.Body}"
-                                                           Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                           VerticalAlignment="Center"/>
-                                            </Grid>
-                                            <Rectangle Width="1" Height="10" Margin="6,0"
-                                                       HorizontalAlignment="Left"
-                                                       Fill="{DynamicResource Border.SubtleBrush}"/>
-
-                                            <!-- $27 -->
-                                            <Grid Margin="0,3">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-                                                <Ellipse Grid.Column="0" Width="14" Height="14" Margin="0,0,12,0"
-                                                         VerticalAlignment="Center"
-                                                         Fill="{Binding Brush27}"/>
-                                                <TextBlock Grid.Column="1"
-                                                           Text="$27 SecurityAccess (unlock)"
-                                                           Style="{StaticResource Text.Body}"
-                                                           Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                           VerticalAlignment="Center"/>
-                                            </Grid>
-                                            <Rectangle Width="1" Height="10" Margin="6,0"
-                                                       HorizontalAlignment="Left"
-                                                       Fill="{DynamicResource Border.SubtleBrush}"/>
-
-                                            <!-- $34 -->
-                                            <Grid Margin="0,3">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-                                                <Ellipse Grid.Column="0" Width="14" Height="14" Margin="0,0,12,0"
-                                                         VerticalAlignment="Center"
-                                                         Fill="{Binding Brush34}"/>
-                                                <TextBlock Grid.Column="1"
-                                                           Text="$34 RequestDownload"
-                                                           Style="{StaticResource Text.Body}"
-                                                           Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                           VerticalAlignment="Center"/>
-                                            </Grid>
-                                            <Rectangle Width="1" Height="10" Margin="6,0"
-                                                       HorizontalAlignment="Left"
-                                                       Fill="{DynamicResource Border.SubtleBrush}"/>
-
-                                            <!-- $36 (with progress) -->
-                                            <Grid Margin="0,3">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <Ellipse Grid.Column="0" Width="14" Height="14" Margin="0,0,12,0"
-                                                         VerticalAlignment="Center"
-                                                         Fill="{Binding Brush36}"/>
-                                                <TextBlock Grid.Column="1"
-                                                           Text="$36 TransferData"
-                                                           Style="{StaticResource Text.Body}"
-                                                           Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                           VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="2"
-                                                           Text="{Binding S36Progress}"
-                                                           Style="{StaticResource Text.MonoDim}"
-                                                           VerticalAlignment="Center"
-                                                           Margin="8,0,0,0"/>
-                                            </Grid>
-
-                                            <TextBlock Text="EXIT"
-                                                       Style="{StaticResource Text.SectionHeader}"
-                                                       Margin="0,18,0,10"/>
-
-                                            <!-- $20 -->
-                                            <Grid Margin="0,3">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-                                                <Ellipse Grid.Column="0" Width="14" Height="14" Margin="0,0,12,0"
-                                                         VerticalAlignment="Center"
-                                                         Fill="{Binding Brush20}"/>
-                                                <TextBlock Grid.Column="1"
-                                                           Text="$20 ReturnToNormalMode"
-                                                           Style="{StaticResource Text.Body}"
-                                                           Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                           VerticalAlignment="Center"/>
-                                            </Grid>
-
-                                            <TextBlock Text="(or P3C TesterPresent timeout - 5 s)"
-                                                       Style="{StaticResource Text.Hint}"
-                                                       Margin="26,2,0,0"/>
-                                        </StackPanel>
-                                    </ScrollViewer>
-                                </Border>
-
-                                <!-- TX / RX log mirror -->
-                                <DockPanel Grid.Column="1">
-                                    <Border DockPanel.Dock="Top"
-                                            Background="{DynamicResource Bg.ElevatedBrush}"
-                                            BorderBrush="{DynamicResource Border.SubtleBrush}"
-                                            BorderThickness="0,0,0,1"
-                                            Padding="12,5">
-                                        <StackPanel Orientation="Horizontal">
-                                            <Ellipse Width="6" Height="6"
-                                                     Fill="{DynamicResource Accent.PrimaryBrush}"
-                                                     VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                            <TextBlock Text="TX / RX log"
-                                                       Style="{StaticResource Text.Caption}"
-                                                       Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                       FontWeight="SemiBold"
-                                                       VerticalAlignment="Center"/>
-                                            <TextBlock Text="mirrors CAN frames + J2534 calls (gated by Log traffic)"
-                                                       Style="{StaticResource Text.Caption}"
-                                                       Margin="8,0,0,0"
-                                                       VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <TextBox x:Name="DownloadLogBox"
-                                             Style="{StaticResource TextBox.Log}"
-                                             IsReadOnly="True"
-                                             TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto"/>
-                                </DockPanel>
-                            </Grid>
-                        </DockPanel>
-                    </TabItem>
-
-                    <!-- Bin Replay tab -->
-                    <TabItem Header="Bin Replay">
+                    <!-- Bin Replay tab - ECU Simulator mode only -->
+                    <TabItem Header="Bin Replay"
+                             Visibility="{Binding ShowsBinReplayTab, Converter={StaticResource BoolToVis}}">
                         <views:BinReplayView DataContext="{Binding BinReplay}"/>
                     </TabItem>
 
-                    <!-- Security ($27) tab -->
-                    <TabItem Header="Security">
-                        <DockPanel DataContext="{Binding SelectedEcu}" LastChildFill="True">
-                            <Border DockPanel.Dock="Top" Style="{StaticResource Toolbar}">
-                                <StackPanel>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Button Content="Reset state"
-                                                Style="{StaticResource Button.Ghost}"
-                                                Command="{Binding DataContext.ResetSecurityCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                                ToolTip="Re-lock every ECU and clear its $27 attempt counter, pending seed, and lockout deadline. Global operator - equivalent to a power-cycle for $27 only, applied to all ECUs at once."/>
-                                        <CheckBox Content="Bypass all $27 (dev override)"
-                                                  Margin="16,0,0,0"
-                                                  VerticalAlignment="Center"
-                                                  IsChecked="{Binding DataContext.BypassAllSecurity, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                                  ToolTip="Manual dev/test override applied to EVERY ECU at once: short-circuits every $27 request regardless of level, lockout, or programming-session state. Each ECU emits seed=00 00 on requestSeed and transitions to unlocked on sendKey regardless of the key value. Use this when you're developing a non-$27 flow (e.g. $34/$36/$3B) and don't want to compute keys. For realistic boot-block behaviour (real T43 math operationally), leave this OFF and select the gm-programming-bypass module on the ECU properties card instead."/>
-                                    </StackPanel>
-                                    <TextBlock Style="{StaticResource Text.Hint}" Margin="0,6,0,0" TextWrapping="Wrap">
-                                        <Run Text="Module-specific config below. Values are passed to the module as JSON strings."/>
-                                        <LineBreak/>
-                                        <Run Text="Tip: for realistic boot-block bypass (active only during a programming session, with real T43 seed/key math operationally) select the gm-programming-bypass module on the ECU card instead of toggling the checkbox above."/>
-                                    </TextBlock>
-                                </StackPanel>
-                            </Border>
+                    <!-- (Security tab removed - reset moved to ECU > Reset state) -->
 
-                            <Border DockPanel.Dock="Top"
-                                    Background="{DynamicResource Bg.BaseBrush}"
-                                    BorderBrush="{DynamicResource Border.SubtleBrush}"
-                                    BorderThickness="0,0,0,1"
-                                    Padding="14,8">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="2*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="STATUS" Style="{StaticResource Text.SectionHeader}" Margin="0"/>
-                                        <TextBlock Text="{Binding SecurityStatusText, FallbackValue=-}"
-                                                   Style="{StaticResource Text.Mono}"
-                                                   Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                   ToolTip="Live ECU lock state. Counts down during a 10s lockout window after 3 failed key attempts."/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1">
-                                        <TextBlock Text="FAILED ATTEMPTS" Style="{StaticResource Text.SectionHeader}" Margin="0"/>
-                                        <TextBlock Text="{Binding SecurityFailedAttemptsText, FallbackValue=-}"
-                                                   Style="{StaticResource Text.Mono}"
-                                                   Foreground="{DynamicResource Text.PrimaryBrush}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="PENDING SEED" Style="{StaticResource Text.SectionHeader}" Margin="0"/>
-                                        <TextBlock Text="{Binding SecurityPendingSeedText, FallbackValue=-}"
-                                                   Style="{StaticResource Text.Mono}"
-                                                   Foreground="{DynamicResource Text.PrimaryBrush}"
-                                                   ToolTip="Level and bytes of the last requestSeed response - cleared on successful unlock or lockout arm."/>
-                                    </StackPanel>
-                                </Grid>
-                            </Border>
-
-                            <DataGrid ItemsSource="{Binding SecurityModuleConfigEntries}"
-                                      AutoGenerateColumns="False"
-                                      CanUserAddRows="True"
-                                      CanUserDeleteRows="True"
-                                      Margin="0">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Key"
-                                                        Binding="{Binding Key, UpdateSourceTrigger=LostFocus}"
-                                                        Width="280"/>
-                                    <DataGridTextColumn Header="Value"
-                                                        Binding="{Binding Value, UpdateSourceTrigger=LostFocus}"
-                                                        Width="*"/>
-                                </DataGrid.Columns>
-                            </DataGrid>
-                        </DockPanel>
-                    </TabItem>
-
-                    <!-- Glitch settings tab -->
-                    <TabItem Header="Glitch settings">
+                    <!-- Glitch settings tab - ECU Simulator mode only -->
+                    <TabItem Header="Glitch settings"
+                             Visibility="{Binding ShowsGlitchTab, Converter={StaticResource BoolToVis}}">
                         <DockPanel DataContext="{Binding SelectedEcu}" LastChildFill="True">
                             <Border DockPanel.Dock="Top" Style="{StaticResource Toolbar}">
                                 <StackPanel Orientation="Horizontal">
@@ -1103,22 +812,16 @@
                         </DockPanel>
                     </TabItem>
 
-                    <!-- Capture Bootloader tab.
-                         Single checkbox flips bus.Capture.BootloaderCaptureEnabled
-                         which is the SOLE switch that makes Service36Handler relax
-                         its GMW3110 §8.13.4 NRC $31 bounds check and tells
-                         EcuExitLogic to dump the assembled $36 buffer to disk on
-                         session end. Unticked = spec-correct behaviour. -->
-                    <TabItem Header="Bootloader">
+                    <!-- Capture Bootloader tab. Captures are written
+                         unconditionally; this tab is a browser/launcher for
+                         the files. Service36Handler anchors on the first $36
+                         address so real-DPS absolute-address sessions work
+                         without any toggle. -->
+                    <TabItem Header="Bootloader"
+                             Visibility="{Binding ShowsBootloaderTab, Converter={StaticResource BoolToVis}}">
                         <DockPanel DataContext="{Binding CaptureBootloader}" LastChildFill="True">
                             <Border DockPanel.Dock="Top" Style="{StaticResource Toolbar}">
                                 <StackPanel Orientation="Horizontal">
-                                    <CheckBox Content="Enable bootloader capture"
-                                              IsChecked="{Binding Enabled}"
-                                              VerticalAlignment="Center"
-                                              FontWeight="SemiBold"
-                                              ToolTip="OFF (default): Service36Handler follows GMW3110 §8.13.4 strictly - out-of-range $36 addresses return NRC $31. ON: bounds check is relaxed (first $36's address is treated as base; the buffer grows as needed) and the assembled payload is dumped to disk when the programming session ends."/>
-                                    <Rectangle Width="1" Margin="16,3" Fill="{DynamicResource Border.SubtleBrush}"/>
                                     <Button Content="Open folder"
                                             Command="{Binding OpenFolderCommand}"
                                             Style="{StaticResource Button.Ghost}"
@@ -1127,17 +830,6 @@
                                             Command="{Binding RefreshCommand}"
                                             Style="{StaticResource Button.Ghost}"/>
                                 </StackPanel>
-                            </Border>
-
-                            <Border DockPanel.Dock="Bottom"
-                                    Background="{DynamicResource Bg.BaseBrush}"
-                                    BorderBrush="{DynamicResource Border.SubtleBrush}"
-                                    BorderThickness="0,1,0,0"
-                                    Padding="14,6">
-                                <TextBlock Text="{Binding StatusText}"
-                                           Style="{StaticResource Text.Caption}"
-                                           Foreground="{DynamicResource Text.PrimaryBrush}"
-                                           TextWrapping="Wrap"/>
                             </Border>
 
                             <Grid>

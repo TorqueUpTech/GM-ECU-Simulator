@@ -116,15 +116,6 @@ public sealed class NodeState
     public bool NormalCommunicationDisabled { get; set; }
 
     /// <summary>
-    /// GMW3110 §8.16 SPS_TYPE_C runtime gate. Stays false from power-on
-    /// until the ECU receives $A2 while <see cref="NormalCommunicationDisabled"/>
-    /// is true; then becomes true so subsequent requests get normal responses on
-    /// SPS_PrimeRsp. Cleared by EcuExitLogic on $20 / P3C timeout, dropping the
-    /// ECU back to silent. Irrelevant (always false) for SPS_TYPE_A/B ECUs.
-    /// </summary>
-    public bool DiagnosticResponsesEnabled { get; set; }
-
-    /// <summary>
     /// True after a $A5 sub $01 (requestProgrammingMode) or sub $02
     /// (requestProgrammingMode_HighSpeed) positive response - the prerequisite
     /// for the $A5 sub $03 enableProgrammingMode that actually enters the session.
@@ -185,11 +176,10 @@ public sealed class NodeState
     /// <summary>
     /// Number of bytes in the startingAddress field for this $36 ECU. GMW3110
     /// §8.13 requires it to be consistent across all $36 calls to the same
-    /// node. The spec permits 2..4; 4 is the GMW3110-2010-era default used by
-    /// real T43-class TCMs (kernel destinations like 0x003FAFE0 don't fit in
-    /// 3 bytes, and tools like 6Speed.T43 always send the full 4). Configure
-    /// per-ECU via EcuNode.DownloadAddressByteCount / EcuDto when an older
-    /// node uses 2 or 3.
+    /// node. Fixed to 4 in production (no UI/config knob): kernel destinations
+    /// like 0x003FAFE0 don't fit in 3 bytes, and tools like 6Speed.T43 always
+    /// send the full 4. Tests that exercise 2/3-byte address layouts override
+    /// this field directly via node.State.DownloadAddressByteCount.
     /// </summary>
     public int DownloadAddressByteCount { get; set; } = 4;
 

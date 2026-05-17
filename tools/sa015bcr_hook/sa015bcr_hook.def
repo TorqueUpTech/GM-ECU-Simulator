@@ -1,0 +1,4 @@
+LIBRARY sa015bcr
+EXPORTS
+    sa015bcr
+    getVersion

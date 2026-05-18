@@ -5,7 +5,7 @@ using Common;
 
 namespace GmEcuSimulator;
 
-// Per-user UI preferences. Lives at %LOCALAPPDATA%\GmEcuSimulator\settings.json
+// Per-user UI preferences. Lives at %LOCALAPPDATA%\GmEcuSimulator\config\settings.json
 // (next to the bus_*.csv files written by FileLogSink). Separate from the
 // per-config SimulatorConfig because these are app-wide UI choices, not
 // part of any one ECU profile - switching configs shouldn't flip the log
@@ -77,12 +77,53 @@ public sealed class AppSettings
     /// </summary>
     public string? PrimeWizardBinLoadDir { get; set; }
 
+    /// <summary>
+    /// Last directory used by File > Open / Save As / Import / Export of the
+    /// full simulator config (*.json). Shared across all four dialogs - they
+    /// all read and write the same on-disk schema, so users typically keep
+    /// them in one folder.
+    /// </summary>
+    public string? LastConfigDir { get; set; }
+
+    /// <summary>
+    /// Last directory used by Setup > Save PIDs / Load PIDs (*.pids.json).
+    /// Separate from <see cref="LastConfigDir"/> because PID-only exports are
+    /// often shared between ECUs and may live in a different working folder
+    /// from the full configs.
+    /// </summary>
+    public string? LastPidListDir { get; set; }
+
+    /// <summary>
+    /// Last directory used by the ECU editor's "Load info from bin..."
+    /// command. Separate from <see cref="PrimeWizardBinLoadDir"/> because
+    /// the editor's flow targets a single ECU (DID enrichment from a flash
+    /// image) and the wizard's flow targets a full prime - users may keep
+    /// donor bins and full readbacks in different folders.
+    /// </summary>
+    public string? LastBinDir { get; set; }
+
+    /// <summary>
+    /// Last directory used by Bin Replay > Load file. Replay bins are
+    /// usually scenario / capture files, often kept apart from flash bins
+    /// and DPS archives, so this gets its own slot.
+    /// </summary>
+    public string? LastBinReplayDir { get; set; }
+
+    /// <summary>
+    /// Helper for dialog InitialDirectory seeding: returns <paramref name="dir"/>
+    /// when non-null/empty and still present on disk, else empty string (which
+    /// makes Microsoft.Win32 dialogs fall back to the Windows MRU). Used by
+    /// the File and ECU editor pickers to round-trip last-used dirs.
+    /// </summary>
+    public static string ResolveInitialDir(string? dir)
+        => (!string.IsNullOrEmpty(dir) && Directory.Exists(dir)) ? dir : string.Empty;
+
     public static string DefaultPath
     {
         get
         {
             var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(local, "GmEcuSimulator", "settings.json");
+            return Path.Combine(local, "GmEcuSimulator", "config", "settings.json");
         }
     }
 

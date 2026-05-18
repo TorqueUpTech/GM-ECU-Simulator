@@ -3,6 +3,7 @@ using System.Windows;
 using Core.Bus;
 using Core.Dps;
 using Core.Ecu;
+using Core.Security;
 
 namespace GmEcuSimulator.ViewModels.PrimeWizard;
 
@@ -183,16 +184,18 @@ public sealed class PrimeWizardViewModel : NotifyPropertyChangedBase
     // the caller can re-emit it via `with` on the dataset.
     //
     // For the fixed-seed field: serialise to a one-key { "fixedSeed": "..." }
-    // JsonElement only if the user actually typed something AND selected the
-    // gm-permissive-5byte module - the field is meaningless for any other
-    // module, and an empty entry should leave the module on its default
-    // (random seed) behaviour.
+    // JsonElement only if the user actually typed something AND selected a
+    // bypass module (the only module family that honours fixedSeed). Empty
+    // input leaves the module on its default random-seed behaviour.
     private static PrimeReport ApplySecurityOverrides(PrimeReport report, PrimeWizardContext ctx)
     {
         var moduleId = ctx.OverrideSecurityModuleId ?? report.SecurityModuleId;
         JsonElement? config = report.SecurityModuleConfig;
 
-        if (moduleId == "gm-permissive-5byte" && !string.IsNullOrWhiteSpace(ctx.OverrideFixedSeedHex))
+        bool isBypass = SecurityModuleRegistry.Create(moduleId)?.Behaviour
+                        == SecurityModuleBehaviour.BypassAll;
+
+        if (isBypass && !string.IsNullOrWhiteSpace(ctx.OverrideFixedSeedHex))
         {
             var dict = new Dictionary<string, string>
             {
@@ -200,11 +203,11 @@ public sealed class PrimeWizardViewModel : NotifyPropertyChangedBase
             };
             config = JsonSerializer.SerializeToElement(dict);
         }
-        else if (moduleId != "gm-permissive-5byte")
+        else if (!isBypass)
         {
-            // Switching away from the permissive module drops its config
-            // entirely - we don't want a stale fixedSeed riding along into
-            // a module that wouldn't know what to do with it.
+            // Switching to a strict module drops the bypass config entirely
+            // - we don't want a stale fixedSeed riding along into a module
+            // that wouldn't know what to do with it.
             config = null;
         }
 

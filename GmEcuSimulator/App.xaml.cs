@@ -22,12 +22,13 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // DPS prime reports get their own folder. Sibling of bus logs/ and
-        // shim logs/, organized by output source rather than dumped loose at
-        // the GmEcuSimulator root.
+        // DPS prime reports get their own folder under the shared logs/
+        // parent. Sibling of logs/bus logs and logs/shim logs and
+        // logs/captures, all four organised by output source rather than
+        // dumped loose at the GmEcuSimulator root.
         var primeLogDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "GmEcuSimulator", "death by dps");
+            "GmEcuSimulator", "logs", "death by dps");
         Directory.CreateDirectory(primeLogDir);
         PrimeReportWriter.LogDir = primeLogDir;
 
@@ -57,7 +58,7 @@ public partial class App : Application
 
         // Default the bootloader-capture directory. CaptureSettings leaves
         // it null in its constructor so unit tests don't write to disk; WPF
-        // unconditionally points it at %LOCALAPPDATA%\GmEcuSimulator\captures
+        // unconditionally points it at %LOCALAPPDATA%\GmEcuSimulator\logs\captures
         // so every programming session leaves a usable .bin trail.
         // ConfigStore.ApplyTo overwrites this if the loaded config carries
         // a user-set directory override.

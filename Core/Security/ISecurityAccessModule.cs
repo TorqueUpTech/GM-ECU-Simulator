@@ -20,13 +20,12 @@ public interface ISecurityAccessModule
     string Id { get; }
 
     /// <summary>
-    /// Module-level view of the underlying algorithm's programming-session
-    /// policy. Surfaced to the UI so the operator can see at a glance whether
-    /// $27 will short-circuit once the ECU enters a programming session.
-    /// Defaults to <see cref="ProgrammingSessionBehavior.UnchangedAlgorithm"/>
-    /// for modules that don't wrap an <see cref="ISeedKeyAlgorithm"/>.
+    /// Whether this module verifies seed/key (<see cref="SecurityModuleBehaviour.Strict"/>)
+    /// or short-circuits every $27 step (<see cref="SecurityModuleBehaviour.BypassAll"/>).
+    /// Surfaced to the UI so the operator can see at a glance whether $27 will
+    /// actually be enforced.
     /// </summary>
-    ProgrammingSessionBehavior ProgrammingSession => ProgrammingSessionBehavior.UnchangedAlgorithm;
+    SecurityModuleBehaviour Behaviour => SecurityModuleBehaviour.Strict;
 
     /// <summary>
     /// Process one $27 USDT request. The implementation must enqueue exactly

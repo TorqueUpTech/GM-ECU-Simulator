@@ -9,12 +9,14 @@
         xmlns:av="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="av"
-        Title="ECU Setup"
+        Title="PID Setup"
         Icon="/Resources/app.ico"
         Height="720" Width="1100"
         MinHeight="480" MinWidth="760"
         WindowStartupLocation="CenterOwner"
+        WindowState="Maximized"
         ShowInTaskbar="True"
+        FontSize="14"
         Style="{StaticResource Window.AppShell}">
 
     <Window.Resources>
@@ -61,6 +63,16 @@
                 <x:Type TypeName="proto:PidDataType"/>
             </ObjectDataProvider.MethodParameters>
         </ObjectDataProvider>
+
+        <!-- Caption styles in the theme set a smaller FontSize that would
+             override window-level inheritance; pin to 14 locally. Same
+             pattern as the Prime Wizard pages. -->
+        <Style x:Key="Caption14" TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}">
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+        <Style x:Key="Hint14" TargetType="TextBlock" BasedOn="{StaticResource Text.Hint}">
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
     </Window.Resources>
 
     <DockPanel LastChildFill="True">
@@ -82,7 +94,7 @@
                                FontWeight="Bold" FontSize="12"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
-                <TextBlock Text="ECU Setup"
+                <TextBlock Text="PID Setup"
                            Style="{StaticResource Text.Body}"
                            Foreground="{DynamicResource Text.PrimaryBrush}"
                            FontWeight="SemiBold"
@@ -155,7 +167,7 @@
                                    Margin="0" VerticalAlignment="Center"/>
                         <TextBlock Grid.Column="1"
                                    Text="{Binding Ecus.Count, StringFormat=\{0\} configured}"
-                                   Style="{StaticResource Text.Caption}"
+                                   Style="{StaticResource Caption14}"
                                    VerticalAlignment="Center"/>
                     </Grid>
 
@@ -183,19 +195,45 @@
                                    VerticalAlignment="Center"/>
                         <TextBlock Grid.Column="1"
                                    Text="{Binding Pids.Count, FallbackValue=no ECU selected, StringFormat=\{0\} parameter(s)}"
-                                   Style="{StaticResource Text.Caption}"
+                                   Style="{StaticResource Caption14}"
                                    VerticalAlignment="Center"
                                    Margin="12,0,0,0"/>
                         <StackPanel Grid.Column="2" Orientation="Horizontal">
                             <!-- AncestorType=Window resolves the DataContext back to MainViewModel
                                  (the Window's DataContext), bypassing the inner DataContext that
-                                 was rebased to SetupSelectedEcu for the rest of this pane. -->
-                            <Button Style="{StaticResource Button.Primary}"
-                                    Content="Add PID"
-                                    Margin="0,0,8,0"
-                                    Command="{Binding DataContext.AddSetupPidCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"/>
-                            <Button Content="Remove PID"
-                                    Command="{Binding DataContext.RemoveSetupPidCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"/>
+                                 was rebased to SetupSelectedEcu for the rest of this pane.
+                                 Glyphs come from Segoe MDL2 Assets (built into Windows). -->
+                            <StackPanel.Resources>
+                                <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Width" Value="36"/>
+                                    <Setter Property="Height" Value="32"/>
+                                    <Setter Property="Margin" Value="0,0,6,0"/>
+                                    <Setter Property="Padding" Value="0"/>
+                                    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                </Style>
+                            </StackPanel.Resources>
+                            <Button Style="{StaticResource IconButton}"
+                                    Command="{Binding DataContext.SavePidsCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                    ToolTip="Save this ECU's PID list (including waveform settings) to a .pids.json file.">
+                                <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
+                            </Button>
+                            <Button Style="{StaticResource IconButton}"
+                                    Command="{Binding DataContext.LoadPidsCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                    ToolTip="Load a .pids.json file and replace this ECU's PID list with its contents.">
+                                <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
+                            </Button>
+                            <Button Style="{StaticResource IconButton}"
+                                    Command="{Binding DataContext.AddSetupPidCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                    ToolTip="Add a new PID with default waveform settings. The address auto-picks the next free byte range; the name disambiguates if 'New PID' already exists.">
+                                <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
+                            </Button>
+                            <Button Style="{StaticResource IconButton}"
+                                    Margin="0"
+                                    Command="{Binding DataContext.RemoveSetupPidCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                    ToolTip="Remove the selected PID from this ECU.">
+                                <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
+                            </Button>
                         </StackPanel>
                     </Grid>
 
@@ -203,7 +241,8 @@
                               SelectedItem="{Binding SelectedPid}"
                               AutoGenerateColumns="False"
                               CanUserAddRows="False"
-                              CanUserDeleteRows="False">
+                              CanUserDeleteRows="False"
+                              FontSize="14">
                         <DataGrid.RowStyle>
                             <Style TargetType="{x:Type DataGridRow}" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                 <Style.Triggers>
@@ -257,7 +296,7 @@
                                Margin="0,0,0,12"/>
                     <TextBlock DockPanel.Dock="Top"
                                Text="Generator for the selected PID."
-                               Style="{StaticResource Text.Hint}"
+                               Style="{StaticResource Hint14}"
                                Margin="0,-4,0,12"/>
 
                     <ScrollViewer VerticalScrollBarVisibility="Auto"

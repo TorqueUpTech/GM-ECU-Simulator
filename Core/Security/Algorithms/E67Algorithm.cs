@@ -3,48 +3,48 @@ using System.Text.Json;
 
 namespace Core.Security.Algorithms;
 
-// GM E38 ECM seed-key algorithm (GMLAN algorithm 0x92). Two-byte seed,
+// GM E67 ECM seed-key algorithm (GMLAN algorithm 0x89). Two-byte seed,
 // two-byte key, level 1 only.
 //
-// E67 does NOT share this algorithm despite community sources sometimes
-// claiming so. Daniel2345's PowerPCM_Flasher_0006 (drop-down "E38 - $92" vs
-// "E67 - $89") implements two distinct native ciphers, and a brute-force
-// equivalence check over all 65536 seeds finds zero matches between them.
-// For E67 use the gm-e67 module (E67Algorithm); see that file for the $89
-// math.
+// Algorithm source: native function `KeyAlgoGm_$89` extracted from
+// Daniel2345's PowerPCM_Flasher_0006.exe (RVA 0x6670, .text section of the
+// C++/CLI mixed-mode assembly). The drop-down in PowerPCM_Flasher lists the
+// E38 entry as "E38 - $92" and the E67 entry as "E67 - $89", and the two
+// native cipher bodies are demonstrably different (brute-force check over
+// all 65536 seeds returns zero collisions).
 //
-// Algorithm source (documented openly in the GM tuning community):
-//   - https://github.com/opensourcetuning/GM (file "E38 Seed Key Algorithm")
-//   - https://github.com/YustasSwamp/gm-seed-key (table_gmlan.h)
-//   - https://pcmhacking.net/forums/viewtopic.php?t=5876
-//   - PowerPCM_Flasher_0006.exe native function `KeyAlgoGm_$92` (RVA 0x6640)
-//     - extracted 2026-05-18, mathematically equivalent for all 65536 seeds
+// Disassembly (cleaned up):
+//     v = rol16(seed, 6)
+//     v = bswap16(v)           ; asm helper returns up to 24 bits; only low 16
+//                              ; survive the eventual & 0xFFFF in ror16, so
+//                              ; the upper byte is harmless here
+//     v = v - 0x55E9           ; 32-bit subtract
+//     v = ror16(v & 0xFFFF, 2)
+//     key = (v + 0x2A8E) & 0xFFFF
 //
-// Reference C code:
-//     k = byteSwap16(seed);
-//     k = k + 0x7D58;
-//     k = ~k;
-//     k = k & 0xFFFF;
-//     k = k + 0x8001;
-//     key = byteSwap16(k & 0xFFFF);
+// Verified test vectors (computed from the disassembly above; arithmetic
+// is unit-tested in E67AlgorithmTests):
+//     0x0000 -> 0x1513
+//     0x1234 -> 0x5637
+//     0xABCD -> 0xAFD0
+//     0xDEAD -> 0xB2FE
+//     0xCAFE -> 0xC1C3
+//     0xFFFF -> 0xD513
+// Real captured pairs from hardware should be added there as additional
+// Theory inputs when available.
 //
-// Verified test vectors (computed from the algorithm above):
-//     0x1234 -> 0x96CE
-//     0xA1B2 -> 0x0750
-//     0xDEAD -> 0xCA54
-//     0xCAFE -> 0xDE03
-//     0xFFFF -> 0xA902
-// See E38AlgorithmTests for the round-trip checks. Real captured pairs from
-// hardware should be added there as additional Theory inputs when available.
+// Programming-session policy: UnchangedAlgorithm. Same reasoning as E38 -
+// the boot block runs the same $27 stub as the OS, and PowerPCM_Flasher
+// uses this single algorithm regardless of session state.
 //
 // Configuration (optional, via SecurityModuleConfig JsonElement):
-//     { "fixedSeed": "1234" }   // hex, 4 chars — locks the seed for repeatable testing
+//     { "fixedSeed": "1234" }   // hex, 4 chars - locks the seed for repeatable testing
 // No fixedSeed -> Random.Shared.NextBytes per request (more realistic).
-public sealed class E38Algorithm : ISeedKeyAlgorithm
+public sealed class E67Algorithm : ISeedKeyAlgorithm
 {
     private byte[]? fixedSeed;
 
-    public string Id => "gm-e38-2byte";
+    public string Id => "gm-e67-2byte";
     public int SeedLength => 2;
     public int KeyLength => 2;
     public IEnumerable<byte> SupportedLevels { get; } = new byte[] { 1 };
@@ -58,9 +58,6 @@ public sealed class E38Algorithm : ISeedKeyAlgorithm
         else
         {
             Random.Shared.NextBytes(seedBuffer.Slice(0, 2));
-            // Avoid an all-zero seed — the generic module treats seed-all-zero
-            // as "already unlocked", which would confuse a tester that just
-            // asked for a fresh seed on a locked ECU.
             if (seedBuffer[0] == 0 && seedBuffer[1] == 0) seedBuffer[0] = 1;
         }
         seedLength = 2;
@@ -94,12 +91,23 @@ public sealed class E38Algorithm : ISeedKeyAlgorithm
     /// <summary>The bare math. Exposed for unit tests and brute-forcers.</summary>
     public static ushort ComputeKey(ushort seed)
     {
-        uint k = (uint)((seed >> 8) | ((seed & 0xFF) << 8));
-        k = k + 0x7D58;
-        k = ~k;
-        k = k & 0xFFFF;
-        k = k + 0x8001;
-        return (ushort)(((k & 0xFF00) >> 8) | ((k & 0xFF) << 8));
+        uint v = Rol16(seed, 6);
+        v = ((v & 0xFFFF) << 8) | ((v & 0xFFFF) >> 8);
+        v = (v - 0x55E9) & 0xFFFFFFFF;
+        v = Ror16((ushort)(v & 0xFFFF), 2);
+        return (ushort)((v + 0x2A8E) & 0xFFFF);
+    }
+
+    private static uint Rol16(ushort x, int n)
+    {
+        n &= 15;
+        return n == 0 ? x : (uint)(((x << n) | (x >> (16 - n))) & 0xFFFF);
+    }
+
+    private static uint Ror16(ushort x, int n)
+    {
+        n &= 15;
+        return n == 0 ? x : (uint)(((x >> n) | (x << (16 - n))) & 0xFFFF);
     }
 
     private static bool TryParseHex16(string? hex, out byte hi, out byte lo)

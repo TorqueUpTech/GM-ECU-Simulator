@@ -1,9 +1,15 @@
 <UserControl x:Class="GmEcuSimulator.Views.PrimeWizard.Page1Archive"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FontSize="14">
+    <UserControl.Resources>
+        <Style x:Key="Caption14" TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}">
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+    </UserControl.Resources>
     <StackPanel Orientation="Vertical" Margin="0,12">
         <TextBlock Text="Pick the DPS programming archive (.zip) you want the simulator to honour."
-                   Style="{StaticResource Text.Caption}"
+                   Style="{StaticResource Caption14}"
                    TextWrapping="Wrap"
                    Margin="0,0,0,12"/>
 
@@ -32,16 +38,16 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="Archive:" Style="{StaticResource Text.Caption}"/>
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Archive:" Style="{StaticResource Caption14}"/>
                 <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ArchiveBaseName}" FontFamily="Consolas"/>
 
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="Utility file:" Style="{StaticResource Text.Caption}" Margin="0,6,0,0"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Utility file:" Style="{StaticResource Caption14}" Margin="0,6,0,0"/>
                 <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding UtilityFileName}" Margin="0,6,0,0" FontFamily="Consolas"/>
 
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="Calibration files:" Style="{StaticResource Text.Caption}" Margin="0,6,0,0"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Calibration files:" Style="{StaticResource Caption14}" Margin="0,6,0,0"/>
                 <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding CalCount}" Margin="0,6,0,0"/>
 
-                <TextBlock Grid.Row="3" Grid.Column="0" Text="OS Part Number:" Style="{StaticResource Text.Caption}" Margin="0,6,0,0"/>
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="OS Part Number:" Style="{StaticResource Caption14}" Margin="0,6,0,0"/>
                 <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding OsPartNumber, FallbackValue=(none)}" Margin="0,6,0,0" FontFamily="Consolas"/>
             </Grid>
         </Border>

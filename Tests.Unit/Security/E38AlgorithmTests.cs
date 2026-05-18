@@ -31,7 +31,7 @@ public sealed class E38AlgorithmTests
         var algo = new E38Algorithm();
         algo.LoadConfig(JsonSerializer.SerializeToElement(new { fixedSeed = "1234" }));
         var node = NodeFactory.CreateNode(
-            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-algo-92"));
+            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-e92"));
         var ch = NodeFactory.CreateChannel();
 
         // requestSeed
@@ -52,7 +52,7 @@ public sealed class E38AlgorithmTests
         var algo = new E38Algorithm();
         algo.LoadConfig(JsonSerializer.SerializeToElement(new { fixedSeed = "1234" }));
         var node = NodeFactory.CreateNode(
-            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-algo-92"));
+            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-e92"));
         var ch = NodeFactory.CreateChannel();
 
         Service27Handler.Handle(node, new byte[] { 0x27, 0x01 }, ch, nowMs: 0);
@@ -71,7 +71,7 @@ public sealed class E38AlgorithmTests
         // recompute the key with the documented algorithm, send it back, expect unlock.
         var algo = new E38Algorithm();
         var node = NodeFactory.CreateNode(
-            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-algo-92"));
+            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-e92"));
         var ch = NodeFactory.CreateChannel();
 
         Service27Handler.Handle(node, new byte[] { 0x27, 0x01 }, ch, nowMs: 0);
@@ -88,27 +88,20 @@ public sealed class E38AlgorithmTests
                      TestFrame.DequeueSingleFrameUsdt(ch));
     }
 
-    // ----- Programming-session policy -----
+    // ----- Programming-session behaviour -----
     //
-    // E38 bootloader enforces the same GMLAN 0x92 algorithm as the OS - this
-    // is the inverse of the T43 boot-block stub. The test asserts both the
-    // declared policy and the runtime behaviour after $10 $02.
-
-    [Fact]
-    public void Policy_DeclaresUnchangedAlgorithm()
-    {
-        Assert.Equal(ProgrammingSessionBehavior.UnchangedAlgorithm, new E38Algorithm().ProgrammingSession);
-    }
+    // Wrapping E38Algorithm in a Strict module (the default) means $10 $02
+    // does not weaken security; the tester must still present the right
+    // computed key. Confirms the post-cleanup behaviour where the strict /
+    // bypass choice lives on the module, not the algorithm.
 
     [Fact]
     public void EndToEnd_AfterDollar10Dollar02_StillRequiresRealKey()
     {
-        // Same wire sequence as the T43 'unlocks via 00 00' test, but with
-        // E38's UnchangedAlgorithm policy the bypass codepath stays cold.
         var algo = new E38Algorithm();
         algo.LoadConfig(JsonSerializer.SerializeToElement(new { fixedSeed = "1234" }));
         var node = NodeFactory.CreateNode(
-            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-algo-92"));
+            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-e38-2byte"));
         var ch = NodeFactory.CreateChannel();
 
         Service10Handler.Handle(node, new byte[] { 0x10, 0x02 }, ch);

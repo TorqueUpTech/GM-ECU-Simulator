@@ -6,14 +6,14 @@ using Core.Bus;
 
 namespace GmEcuSimulator.ViewModels;
 
-// Backs the Capture Bootloader tab. The bus always writes captured $36
-// payloads + flash regions to disk - the user-facing tab is just a
-// browser/launcher for the files. The previous Enabled checkbox was removed
-// when Service36Handler moved to unconditional address-anchoring (so the
-// old "capture off = NRC $31 on absolute addresses" branch no longer
-// exists; capture is always on, but writes only happen when a directory is
+// Backs the Captures tab. The bus always writes captured $36 payloads +
+// flash regions to disk - the user-facing tab is just a browser/launcher
+// for the files. The previous Enabled checkbox was removed when
+// Service36Handler moved to unconditional address-anchoring (so the old
+// "capture off = NRC $31 on absolute addresses" branch no longer exists;
+// capture is always on, but writes only happen when a directory is
 // configured, which WPF startup unconditionally does).
-public sealed class CaptureBootloaderViewModel : NotifyPropertyChangedBase
+public sealed class CaptureViewModel : NotifyPropertyChangedBase
 {
     private readonly CaptureSettings settings;
 
@@ -22,7 +22,7 @@ public sealed class CaptureBootloaderViewModel : NotifyPropertyChangedBase
     public RelayCommand OpenFolderCommand { get; }
     public RelayCommand RefreshCommand { get; }
 
-    public CaptureBootloaderViewModel(CaptureSettings settings)
+    public CaptureViewModel(CaptureSettings settings)
     {
         this.settings = settings;
         settings.CaptureWritten += OnCaptureWritten;
@@ -52,8 +52,12 @@ public sealed class CaptureBootloaderViewModel : NotifyPropertyChangedBase
         Captures.Clear();
         if (string.IsNullOrEmpty(settings.CaptureDirectory)) return;
         if (!Directory.Exists(settings.CaptureDirectory)) return;
+        // Recurse: capture writers group bins under per-session subfolders
+        // (e.g. {dir}/{ecu}-{utc}/cal01_3FAFE0.bin), so a top-level scan
+        // misses everything. SearchOption.AllDirectories walks the whole
+        // tree and the grid groups visually by Modified-desc.
         var infos = new DirectoryInfo(settings.CaptureDirectory)
-            .GetFiles("*.bin")
+            .GetFiles("*.bin", SearchOption.AllDirectories)
             .OrderByDescending(f => f.LastWriteTimeUtc);
         foreach (var fi in infos)
             Captures.Add(new CapturedFile(fi.FullName, fi.Length, fi.LastWriteTime));

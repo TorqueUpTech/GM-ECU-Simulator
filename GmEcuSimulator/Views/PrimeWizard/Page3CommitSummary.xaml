@@ -1,10 +1,16 @@
 <UserControl x:Class="GmEcuSimulator.Views.PrimeWizard.Page3CommitSummary"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FontSize="14">
+    <UserControl.Resources>
+        <Style x:Key="Caption14" TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}">
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+    </UserControl.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Orientation="Vertical" Margin="0,12">
             <TextBlock Text="Review what will be applied. Click Apply Prime to register the ECU, or Back to make changes."
-                       Style="{StaticResource Text.Caption}"
+                       Style="{StaticResource Caption14}"
                        TextWrapping="Wrap"
                        Margin="0,0,0,12"/>
 
@@ -25,13 +31,13 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Archive:" Style="{StaticResource Text.Caption}"/>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Archive:" Style="{StaticResource Caption14}"/>
                     <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ArchiveLine}" FontFamily="Consolas" TextWrapping="Wrap"/>
 
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Loaded bin (if any):" Style="{StaticResource Text.Caption}" Margin="0,6,0,0"/>
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Loaded bin (if any):" Style="{StaticResource Caption14}" Margin="0,6,0,0"/>
                     <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding LoadedBinLine}" FontFamily="Consolas" Margin="0,6,0,0" TextWrapping="Wrap"/>
 
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Security module:" Style="{StaticResource Text.Caption}" Margin="0,6,0,0" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Security module:" Style="{StaticResource Caption14}" Margin="0,6,0,0" VerticalAlignment="Center"/>
                     <ComboBox Grid.Row="2" Grid.Column="1"
                               ItemsSource="{Binding AvailableSecurityModules}"
                               SelectedItem="{Binding SelectedSecurityModule, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -42,7 +48,7 @@
 
                     <TextBlock Grid.Row="3" Grid.Column="0"
                                Text="Fixed seed (10 hex):"
-                               Style="{StaticResource Text.Caption}"
+                               Style="{StaticResource Caption14}"
                                Margin="0,6,0,0"
                                VerticalAlignment="Center"
                                Visibility="{Binding IsFixedSeedVisible, Converter={StaticResource BoolToVis}}"/>
@@ -55,7 +61,7 @@
                                  MinWidth="180"
                                  ToolTip="10 hex characters (5 bytes), e.g. 438930D306. Leave blank for a random seed each session."/>
                         <TextBlock Text="leave blank → random per session"
-                                   Style="{StaticResource Text.Caption}"
+                                   Style="{StaticResource Caption14}"
                                    VerticalAlignment="Center"
                                    Margin="10,0,0,0"/>
                     </StackPanel>
@@ -83,22 +89,22 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Total reads:" Style="{StaticResource Text.Caption}"/>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Total reads:" Style="{StaticResource Caption14}"/>
                     <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding TotalRows}"/>
 
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="From $53 bytecode literal:" Style="{StaticResource Text.Caption}" Margin="0,4,0,0"/>
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="From $53 bytecode literal:" Style="{StaticResource Caption14}" Margin="0,4,0,0"/>
                     <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding BytecodeRows}" Margin="0,4,0,0"/>
 
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="From bin walker:" Style="{StaticResource Text.Caption}" Margin="0,4,0,0"/>
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="From bin walker:" Style="{StaticResource Caption14}" Margin="0,4,0,0"/>
                     <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding BinRows}" Margin="0,4,0,0"/>
 
-                    <TextBlock Grid.Row="3" Grid.Column="0" Text="From auto-populate default:" Style="{StaticResource Text.Caption}" Margin="0,4,0,0"/>
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="From auto-populate default:" Style="{StaticResource Caption14}" Margin="0,4,0,0"/>
                     <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding DefaultRows}" Margin="0,4,0,0"/>
 
-                    <TextBlock Grid.Row="4" Grid.Column="0" Text="From user override:" Style="{StaticResource Text.Caption}" Margin="0,4,0,0"/>
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="From user override:" Style="{StaticResource Caption14}" Margin="0,4,0,0"/>
                     <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding UserRows}" Margin="0,4,0,0"/>
 
-                    <TextBlock Grid.Row="5" Grid.Column="0" Text="Empty (zero bytes):" Style="{StaticResource Text.Caption}" Margin="0,4,0,0"/>
+                    <TextBlock Grid.Row="5" Grid.Column="0" Text="Empty (zero bytes):" Style="{StaticResource Caption14}" Margin="0,4,0,0"/>
                     <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="0,4,0,0">
                         <TextBlock Text="{Binding EmptyRows}"/>
                         <TextBlock Margin="10,0,0,0" Foreground="Red" FontWeight="Bold"

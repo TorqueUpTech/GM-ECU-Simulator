@@ -151,19 +151,33 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     /// <summary>
     /// "Load Info From Bin" command. Pops a file picker, parses the selected
     /// .bin via <see cref="BinIdentificationReader"/>, and pushes the extracted
-    /// identity fields into <see cref="EcuNode.Identifiers"/>. Bound from the
-    /// Bin menu via {Binding SelectedEcu.LoadInfoFromBinCommand}.
+    /// identity fields into <see cref="EcuNode.Identifiers"/>. ORPHAN: the Bin
+    /// menu that used to bind this was retired - kept alive (along with
+    /// <see cref="AutoPopulateDidsCommand"/>) because we'll wire it back up
+    /// when the donor-bin flow returns. Don't remove without checking.
     /// </summary>
     public RelayCommand LoadInfoFromBinCommand { get; }
 
     private void LoadInfoFromBin()
     {
+        var settings = AppSettings.Load();
         var picker = new OpenFileDialog
         {
             Title = "Pick a GM ECU flash image",
             Filter = "ECU bin (*.bin)|*.bin|All files|*.*",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastBinDir),
         };
         if (picker.ShowDialog() != true) return;
+
+        // Persist the dir before we do any parsing - the user picked a real
+        // file in that folder, so even if the bin turns out to be unreadable
+        // / unrecognised we still want the next session to land there.
+        var chosenDir = Path.GetDirectoryName(picker.FileName);
+        if (!string.IsNullOrEmpty(chosenDir))
+        {
+            settings.LastBinDir = chosenDir;
+            settings.Save();
+        }
 
         // Ask the user which load mode to use BEFORE touching the file - if
         // they cancel, no work is done. Yes = replace-all (destructive but
@@ -380,17 +394,43 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
 
     public void AddPid()
     {
-        // Pick the next free address - start at 0x0001 and walk up. We stay
-        // in the 16-bit space for the auto-pick so the new PID is reachable
-        // by a wire-format $22 request without first going through $2D.
+        // Default the new PID to Word (2 bytes). Pick the next address that
+        // doesn't overlap an existing PID's [Address, Address+ResponseLength)
+        // range - simulator addresses are byte-granular (see Service2D's
+        // 32-bit memory addressing), so a Word at 0x0001 occupies bytes
+        // 0x0001..0x0002 and the next Word has to start at 0x0003. Walks
+        // from 0x0001 and skips forward over each occupied span until a gap
+        // of at least newSize bytes is found.
+        const PidSize NewSize = PidSize.Word;
+        int newSize = (int)NewSize;
+        var occupied = Pids
+            .Select(p => (Start: p.Model.Address, End: p.Model.Address + (uint)p.Model.ResponseLength))
+            .OrderBy(s => s.Start)
+            .ToList();
         uint addr = 0x0001;
-        while (Model.GetPid(addr) != null) addr++;
+        foreach (var (start, end) in occupied)
+        {
+            if (addr + newSize <= start) break;     // gap fits before this PID
+            if (end > addr) addr = end;             // skip past the occupied span
+        }
+
+        // Pick a unique name: walk "New PID N" upwards until none collides
+        // with an existing PID name. Bare "New PID" stays the first label so
+        // single-PID configs don't get a number suffix gratuitously.
+        var existingNames = Pids.Select(p => p.Model.Name).ToHashSet(StringComparer.Ordinal);
+        string name = "New PID";
+        if (existingNames.Contains(name))
+        {
+            int n = 2;
+            while (existingNames.Contains($"New PID {n}")) n++;
+            name = $"New PID {n}";
+        }
 
         var pid = new Pid
         {
             Address = addr,
-            Name = "New PID",
-            Size = PidSize.Word,
+            Name = name,
+            Size = NewSize,
             DataType = PidDataType.Unsigned,
             Scalar = 1.0,
             Offset = 0.0,
@@ -409,6 +449,27 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         Model.RemovePid(selectedPid.Model);
         Pids.Remove(selectedPid);
         SelectedPid = null;
+    }
+
+    /// <summary>
+    /// Atomically replace this ECU's PID list with <paramref name="loaded"/>.
+    /// Used by the SetupWindow's Load PIDs button: clears the model + VM
+    /// collection, then appends each new PID through the same pipeline
+    /// AddPid uses so the model's address lookup and the observable list
+    /// stay in sync.
+    /// </summary>
+    public void ReplacePids(IEnumerable<Pid> loaded)
+    {
+        foreach (var existing in Pids.Select(p => p.Model).ToList())
+            Model.RemovePid(existing);
+        Pids.Clear();
+        SelectedPid = null;
+        foreach (var pid in loaded)
+        {
+            Model.AddPid(pid);
+            Pids.Add(new PidViewModel(pid, this));
+        }
+        RaisePidsChanged();
     }
 
     public void RaisePidsChanged() => Model.RaisePidsChanged();
@@ -560,15 +621,15 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         else
         {
             bool inProgSession = s.SecurityProgrammingShortcutActive;
-            SecurityProgSessionText = module.ProgrammingSession switch
+            SecurityProgSessionText = module.Behaviour switch
             {
-                ProgrammingSessionBehavior.BypassAll => inProgSession
-                    ? "Bypass active (in prog session)"
-                    : "Bypass armed (not in prog session)",
-                ProgrammingSessionBehavior.UnchangedAlgorithm => inProgSession
+                SecurityModuleBehaviour.BypassAll => inProgSession
+                    ? "Bypass (in prog session)"
+                    : "Bypass (not in prog session)",
+                SecurityModuleBehaviour.Strict => inProgSession
                     ? "Enforce seed/key (in prog session)"
                     : "Enforce seed/key (not in prog session)",
-                _ => module.ProgrammingSession.ToString(),
+                _ => module.Behaviour.ToString(),
             };
         }
     }

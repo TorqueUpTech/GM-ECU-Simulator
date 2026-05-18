@@ -13,11 +13,11 @@ Sibling docs:
 
 Three things changed materially during implementation. Update the corresponding original section as you go.
 
-### 0a. The archive boot region is not shipped
+### 0a. The archive boot region is not shipped, and family detection from an archive was abandoned
 
 **Original assumption (§5, §11):** `BinIdentificationReader` could be invoked on the archive's OS module to recover family + identifier DIDs. **Actual:** archives contain only the OS region (flash `0x010000` and up). The PowerPC service dispatcher cluster lives at flash `~0x006900` (boot region) - not in the archive. So `Parse` returns null on archive OS modules. The walker remains useful only for full 2 MiB readbacks fed in via Load-Info-from-Bin.
 
-**What ships instead:** `BinIdentificationReader.ReadArchiveOsHeader` extracts the 8-digit ASCII OS part number + 2-char alpha code from the per-module header at file offset `0x0E`/`10`. That plus the `FamilyFromOsPartNumber` table in `ArchivePrimer.cs` is the practical family-detection path for archive-derived primes.
+**What ships instead:** `BinIdentificationReader.ReadArchiveOsHeader` extracts the 8-digit ASCII OS part number + 2-char alpha code from the per-module header at file offset `0x0E`/`10`. The header is surfaced in the Prime Report for human inspection, but **no longer feeds family inference**. The earlier `FamilyFromOsPartNumber` table and archive-filename-prefix sniffing were removed per the donor-only stance (see `feedback_no_os_pn_database.md` in memory). `PrimeReport.Family` is hardcoded `null` in [ArchivePrimer.cs:130](ArchivePrimer.cs:130). Security-module selection is now driven by `PickSecurityModule` reading the utility-file's `$27 Action[1]` algoId; see §0e below.
 
 ### 0b. PidResponseSolver replaced "NRC-only tier 3"
 
@@ -31,6 +31,10 @@ Three things changed materially during implementation. Update the corresponding 
 
 - **Bypass-by-policy unlocks at requestSeed.** `Gmw3110_2010_Generic.HandleBypass` requestSeed branch now sets `SecurityUnlockedLevel = level` along with emitting the all-zero seed. Without this, DPS's "seed `00 00` means already unlocked" shortcut leaves the ECU still locked and `$34` returns NRC `$22`.
 - **Module-change resets security state.** `EcuViewModel.ApplyModuleSelection` calls `ResetSecurityState()` so switching algorithms doesn't inherit the prior module's unlock state. Without this, a session with bypass followed by a session with algo 92 silently runs through the spec's "already unlocked -> seed=00 00" branch instead of actually exercising algo 92.
+
+### 0e. Security module is picked from the utility file's `$27` instruction
+
+**Original assumption (§7 area):** family detection drives the security module choice. **Actual:** `ArchivePrimer.PickSecurityModule` ([ArchivePrimer.cs:266](ArchivePrimer.cs:266)) walks the parsed utility file and reads the first `$27` instruction's `Action[1]` algoId. Non-zero -> `gm-e92-5byte` with `{algoId: "0xNN"}` config (the DPS-style 5-byte cipher in `Gm5ByteAlgorithm`). Zero or absent -> `gm-bypass-2byte` (the `RandomSeedCipher` wrapped with `SecurityModuleBehaviour.BypassAll`). No family lookup, no filename sniffing. The Algo 92 cipher itself was fully extracted on 2026-05-17 - see `reference_dps_algo92_extracted.md` in memory for provenance.
 
 ---
 

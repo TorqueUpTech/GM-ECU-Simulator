@@ -43,7 +43,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     private string? donorBinPath;
     private PrimedDataset? primedDataset;
 
-    // Per-user UI preferences loaded from %LOCALAPPDATA%\GmEcuSimulator\settings.json.
+    // Per-user UI preferences loaded from %LOCALAPPDATA%\GmEcuSimulator\config\settings.json.
     // Each Log-menu checkbox setter writes back through SaveAppSettings() so the
     // user's choices survive across restarts.
     private readonly AppSettings appSettings;
@@ -54,7 +54,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     private SimulatorConfig? priorSnapshot;
 
     public BinReplayViewModel BinReplay { get; }
-    public CaptureBootloaderViewModel CaptureBootloader { get; }
+    public CaptureViewModel Capture { get; }
 
     public RelayCommand NewCommand { get; }
     public RelayCommand OpenCommand { get; }
@@ -69,6 +69,9 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public RelayCommand AddSetupPidCommand { get; }
     public RelayCommand RemoveSetupPidCommand { get; }
     public RelayCommand OpenSetupWindowCommand { get; }
+    public RelayCommand ConfigurePidsCommand { get; }
+    public RelayCommand SavePidsCommand { get; }
+    public RelayCommand LoadPidsCommand { get; }
     public RelayCommand ResetStateCommand { get; }
     public RelayCommand RegisterJ2534Command { get; }
     public RelayCommand UnregisterJ2534Command { get; }
@@ -97,7 +100,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         this.pipeServer = pipeServer;
 
         BinReplay = new BinReplayViewModel(replay, bus, OnBinReplayLoad, OnBinReplayUnload);
-        CaptureBootloader = new CaptureBootloaderViewModel(bus.Capture);
+        Capture = new CaptureViewModel(bus.Capture);
 
         // Hydrate UI preferences. The setters fan out to the static gates in
         // MainWindow + bus.AnnotateFrames so behaviour matches the persisted
@@ -137,6 +140,9 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         AddSetupPidCommand           = new RelayCommand(AddSetupPid,    () => SetupSelectedEcu != null);
         RemoveSetupPidCommand        = new RelayCommand(RemoveSetupPid, () => SetupSelectedEcu?.SelectedPid != null);
         OpenSetupWindowCommand       = new RelayCommand(OpenSetupWindow);
+        ConfigurePidsCommand         = new RelayCommand(ConfigurePids, CanConfigurePids);
+        SavePidsCommand              = new RelayCommand(SaveSetupPids, () => SetupSelectedEcu != null && SetupSelectedEcu.Pids.Count > 0);
+        LoadPidsCommand              = new RelayCommand(LoadSetupPids, () => SetupSelectedEcu != null);
         ResetStateCommand            = new RelayCommand(ResetState, () => Ecus.Count > 0);
         RegisterJ2534Command         = new RelayCommand(RegisterJ2534,         () => !j2534Busy);
         UnregisterJ2534Command       = new RelayCommand(UnregisterJ2534,       () => !j2534Busy);
@@ -151,7 +157,11 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public EcuViewModel? SelectedEcu
     {
         get => selectedEcu;
-        set => SetField(ref selectedEcu, value);
+        set
+        {
+            if (SetField(ref selectedEcu, value))
+                OnPropertyChanged(nameof(ShowsSecurityPill));
+        }
     }
 
     // ---------------- Global mode ----------------
@@ -227,16 +237,19 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
                         "Save As...",
                         onClick: () =>
                         {
+                            var settings = AppSettings.Load();
                             var dlg = new SaveFileDialog
                             {
                                 Filter = "JSON config (*.json)|*.json",
                                 FileName = oldMode.ConfigFileName(),
+                                InitialDirectory = AppSettings.ResolveInitialDir(settings.LastConfigDir),
                             };
                             if (dlg.ShowDialog() != true) return;
                             try
                             {
                                 ConfigStore.Save(SnapshotForSave(), dlg.FileName);
                                 proceed = true;
+                                PersistLastConfigDir(settings, dlg.FileName);
                             }
                             catch (Exception ex) { Error("Save failed", ex); }
                         }),
@@ -578,9 +591,16 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         SetupSelectedEcu = Ecus.FirstOrDefault();
         OnPropertyChanged(nameof(ShowsBinReplayTab));
         OnPropertyChanged(nameof(ShowsGlitchTab));
-        OnPropertyChanged(nameof(ShowsBootloaderTab));
+        OnPropertyChanged(nameof(ShowsCaptureTab));
         OnPropertyChanged(nameof(ShowsPrimeMenu));
         OnPropertyChanged(nameof(ShowsSecurityModuleField));
+        OnPropertyChanged(nameof(ShowsSecurityModuleReadOnly));
+        OnPropertyChanged(nameof(IsEcuSimulatorMode));
+        OnPropertyChanged(nameof(ShowsPidLiveGrid));
+        OnPropertyChanged(nameof(ShowsProgrammingFields));
+        OnPropertyChanged(nameof(ShowsSecurityPill));
+        OnPropertyChanged(nameof(FormRowMaxHeight));
+        OnPropertyChanged(nameof(PidRowMinHeight));
         System.Windows.Input.CommandManager.InvalidateRequerySuggested();
     }
 
@@ -588,8 +608,8 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public bool ShowsBinReplayTab => currentMode == AppMode.EcuSimulator;
     /// <summary>Glitch tab is ECU-Simulator-only.</summary>
     public bool ShowsGlitchTab    => currentMode == AppMode.EcuSimulator;
-    /// <summary>Bootloader tab shows in DPS and Flash Tool modes.</summary>
-    public bool ShowsBootloaderTab
+    /// <summary>Captures tab shows in DPS and Flash Tool modes.</summary>
+    public bool ShowsCaptureTab
         => currentMode is AppMode.DpsWrite or AppMode.DpsRead
                        or AppMode.FlashToolWrite or AppMode.FlashToolRead;
     /// <summary>
@@ -605,13 +625,89 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         => currentMode is AppMode.DpsWrite or AppMode.DpsRead;
 
     /// <summary>
-    /// Per-ECU security-module dropdown in the inspector. Hidden in DPS modes
-    /// because the security module is owned by the Prime Wizard there (chosen
-    /// from the archive's algo metadata, edited on Page 3), and the inspector
-    /// dropdown would let the user clobber that choice mid-session.
+    /// Per-ECU security-module dropdown in the inspector. Shown only in the
+    /// Flash Tool modes. Hidden in DPS modes because the security module is
+    /// owned by the Prime Wizard there (chosen from the archive's algo
+    /// metadata, edited on Page 3), and the inspector dropdown would let the
+    /// user clobber that choice mid-session. Hidden in ECU Simulator mode
+    /// because the user-facing simulator persona doesn't depend on $27 key
+    /// math; the field clutters the inspector without driving any behaviour
+    /// users exercise from that mode.
     /// </summary>
     public bool ShowsSecurityModuleField
-        => currentMode is not (AppMode.DpsWrite or AppMode.DpsRead);
+        => currentMode is AppMode.FlashToolWrite or AppMode.FlashToolRead;
+
+    /// <summary>
+    /// Read-only display of the per-ECU security module in DPS Write / DPS Read
+    /// modes. The dropdown is hidden there (Prime Wizard owns the choice), but
+    /// the user still wants to see which algorithm got picked - so a read-only
+    /// TextBox sits in the inspector with the same label position.
+    /// </summary>
+    public bool ShowsSecurityModuleReadOnly
+        => currentMode is AppMode.DpsWrite or AppMode.DpsRead;
+
+    /// <summary>
+    /// Visibility gate for ECU-Simulator-mode-only inspector actions
+    /// (e.g. the per-ECU "Configure PIDs..." launcher in the Selected ECU
+    /// pane). In DPS / Flash Tool modes the Prime Wizard / archive owns the
+    /// PID list so the standalone editor isn't surfaced from the inspector.
+    /// </summary>
+    public bool IsEcuSimulatorMode => currentMode == AppMode.EcuSimulator;
+
+    /// <summary>
+    /// Visibility gate for the live PID DataGrid in the Selected ECU pane.
+    /// Hidden in Flash Tool Write mode - flashing is a one-way data push and
+    /// the simulator doesn't synthesise PID responses there, so a live-value
+    /// grid would be misleading. Kept visible in ECU Simulator + DPS modes
+    /// where PIDs are part of the host's read/respond loop.
+    /// </summary>
+    public bool ShowsPidLiveGrid => currentMode != AppMode.FlashToolWrite;
+
+    /// <summary>
+    /// Visibility gate for programming-session-only inspector fields
+    /// (FC.BS, Diag addr). Hidden in ECU Simulator mode where the user is
+    /// driving PID/waveform behaviour rather than tuning the ISO-TP / SPS
+    /// addressing the host uses during a programming flow.
+    /// </summary>
+    public bool ShowsProgrammingFields => currentMode != AppMode.EcuSimulator;
+
+    /// <summary>
+    /// Visibility gate for the titlebar Security pill. Shown when an ECU is
+    /// selected (the normal case in ECU Simulator + Flash Tool modes) AND in
+    /// DPS Write / DPS Read modes regardless of selection - those modes are
+    /// about programming a single primed ECU, so the pill stays present even
+    /// before the user primes one. The TextBlock falls back to "No ECU primed"
+    /// when SelectedEcu is null.
+    /// </summary>
+    public bool ShowsSecurityPill
+        => SelectedEcu != null
+           || currentMode is AppMode.DpsWrite or AppMode.DpsRead;
+
+    /// <summary>
+    /// Cap on the Selected ECU inspector's form row when it is sized as a "*"
+    /// row (i.e. when the PID grid is visible and competes for vertical
+    /// space). Set to match the form WrapPanel's natural content height so
+    /// there is no empty band when there's plenty of room, while still
+    /// allowing the row to compress below natural height when the pane is
+    /// tight - the form ScrollViewer's auto vertical scrollbar then takes
+    /// over and only one row of fields is visible at the minimum pane size.
+    /// PositiveInfinity in modes where the row is Auto-sized (PID hidden)
+    /// so the cap doesn't matter.
+    /// </summary>
+    public double FormRowMaxHeight => currentMode switch
+    {
+        AppMode.EcuSimulator                => 120.0,
+        AppMode.DpsWrite or AppMode.DpsRead => 220.0,
+        _                                   => double.PositiveInfinity,
+    };
+
+    /// <summary>
+    /// Floor for the PID row. 125 px = the PID Border header + DataGrid
+    /// column-header row + 1 data row + padding. Set to 0 when the PID grid
+    /// is hidden (Flash Tool Write) so the row collapses cleanly with its
+    /// Collapsed child.
+    /// </summary>
+    public double PidRowMinHeight => ShowsPidLiveGrid ? 125.0 : 0.0;
 
     private void New()
     {
@@ -623,7 +719,12 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
 
     private void Open()
     {
-        var dlg = new OpenFileDialog { Filter = "JSON config (*.json)|*.json|All files|*.*" };
+        var settings = AppSettings.Load();
+        var dlg = new OpenFileDialog
+        {
+            Filter = "JSON config (*.json)|*.json|All files|*.*",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastConfigDir),
+        };
         if (dlg.ShowDialog() != true) return;
         try
         {
@@ -638,6 +739,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             donorBinPath = cfg.DonorBinPath;
             PrimedDataset = null;
             StatusText = $"Loaded {Ecus.Count} ECU(s) from {dlg.FileName}";
+            PersistLastConfigDir(settings, dlg.FileName);
         }
         catch (Exception ex) { Error("Open failed", ex); }
     }
@@ -658,10 +760,12 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
 
     private void SaveAs()
     {
+        var settings = AppSettings.Load();
         var dlg = new SaveFileDialog
         {
             Filter = "JSON config (*.json)|*.json",
             FileName = currentMode.ConfigFileName(),
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastConfigDir),
         };
         if (dlg.ShowDialog() != true) return;
         try
@@ -672,6 +776,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             ConfigStore.Save(cfg, dlg.FileName);
             CurrentFilePath = dlg.FileName;
             StatusText = $"Saved to {dlg.FileName}";
+            PersistLastConfigDir(settings, dlg.FileName);
         }
         catch (Exception ex) { Error("Save failed", ex); }
     }
@@ -681,7 +786,12 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     // For now we replace the bus state; future work could MERGE instead.
     private void Import()
     {
-        var dlg = new OpenFileDialog { Filter = "JSON config (*.json)|*.json|All files|*.*" };
+        var settings = AppSettings.Load();
+        var dlg = new OpenFileDialog
+        {
+            Filter = "JSON config (*.json)|*.json|All files|*.*",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastConfigDir),
+        };
         if (dlg.ShowDialog() != true) return;
         try
         {
@@ -689,24 +799,41 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             ConfigStore.ApplyTo(cfg, bus);
             Rebuild();
             StatusText = $"Imported {Ecus.Count} ECU(s) from {dlg.FileName}";
+            PersistLastConfigDir(settings, dlg.FileName);
         }
         catch (Exception ex) { Error("Import failed", ex); }
     }
 
     private void Export()
     {
+        var settings = AppSettings.Load();
         var dlg = new SaveFileDialog
         {
             Filter = "JSON config (*.json)|*.json",
             FileName = "ecu_config_export.json",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastConfigDir),
         };
         if (dlg.ShowDialog() != true) return;
         try
         {
             ConfigStore.Save(ConfigStore.Snapshot(bus), dlg.FileName);
             StatusText = $"Exported to {dlg.FileName}";
+            PersistLastConfigDir(settings, dlg.FileName);
         }
         catch (Exception ex) { Error("Export failed", ex); }
+    }
+
+    // Shared helper for the four config dialogs (Open / SaveAs / Import /
+    // Export). Round-trips the parent of the chosen file into settings.json
+    // so the next session opens where the user was last working. Silent on
+    // any I/O failure - the dialog already succeeded, persistence is a
+    // nice-to-have.
+    private static void PersistLastConfigDir(AppSettings settings, string chosenFile)
+    {
+        var dir = Path.GetDirectoryName(chosenFile);
+        if (string.IsNullOrEmpty(dir)) return;
+        settings.LastConfigDir = dir;
+        settings.Save();
     }
 
     private void AddEcu()
@@ -760,6 +887,73 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     private void AddSetupPid() => SetupSelectedEcu?.AddPid();
     private void RemoveSetupPid() => SetupSelectedEcu?.RemoveSelectedPid();
 
+    // Save / Load only the PID list of the SetupSelectedEcu - a partial-config
+    // export so a user can move PID + waveform definitions between ECUs / configs
+    // without round-tripping the whole simulator config. JSON shape is a flat
+    // List<PidDto>, the same shape ConfigSchema uses inside an EcuDto.
+    private void SaveSetupPids()
+    {
+        if (SetupSelectedEcu is not { } ecu) return;
+        var settings = AppSettings.Load();
+        var dlg = new SaveFileDialog
+        {
+            Filter = "PID list (*.pids.json)|*.pids.json|JSON (*.json)|*.json|All files|*.*",
+            DefaultExt = ".pids.json",
+            FileName = $"{ecu.Name}.pids.json",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastPidListDir),
+        };
+        if (dlg.ShowDialog() != true) return;
+        try
+        {
+            var pids = ecu.Pids.Select(p => Core.Persistence.ConfigStore.PidDtoFrom(p.Model)).ToList();
+            var json = System.Text.Json.JsonSerializer.Serialize(pids, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(dlg.FileName, json);
+            StatusText = $"Saved {pids.Count} PID(s) to {Path.GetFileName(dlg.FileName)}";
+            PersistLastPidListDir(settings, dlg.FileName);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Save PIDs failed: {ex.Message}";
+        }
+    }
+
+    private void LoadSetupPids()
+    {
+        if (SetupSelectedEcu is not { } ecu) return;
+        var settings = AppSettings.Load();
+        var dlg = new OpenFileDialog
+        {
+            Filter = "PID list (*.pids.json)|*.pids.json|JSON (*.json)|*.json|All files|*.*",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastPidListDir),
+        };
+        if (dlg.ShowDialog() != true) return;
+        try
+        {
+            var json = File.ReadAllText(dlg.FileName);
+            var dtos = System.Text.Json.JsonSerializer.Deserialize<List<Common.Persistence.PidDto>>(json) ?? new();
+            // Replace the ECU's PID list atomically. Existing PIDs are cleared
+            // from both the model and the VM observable, then the loaded set
+            // is appended through the same VM/model pipeline AddPid uses so
+            // bindings/lookups stay consistent.
+            ecu.ReplacePids(dtos.Select(Core.Persistence.ConfigStore.PidFrom));
+            StatusText = $"Loaded {dtos.Count} PID(s) from {Path.GetFileName(dlg.FileName)}";
+            PersistLastPidListDir(settings, dlg.FileName);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Load PIDs failed: {ex.Message}";
+        }
+    }
+
+    // Twin of PersistLastConfigDir for the Save/Load PIDs pair.
+    private static void PersistLastPidListDir(AppSettings settings, string chosenFile)
+    {
+        var dir = Path.GetDirectoryName(chosenFile);
+        if (string.IsNullOrEmpty(dir)) return;
+        settings.LastPidListDir = dir;
+        settings.Save();
+    }
+
     /// <summary>
     /// ECU > Reset State menu handler. Power-cycles every ECU on the bus
     /// (spec-correct $20 ReturnToNormalMode teardown + full $27 re-lock).
@@ -795,6 +989,21 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         };
         setupWindow.Closed += (_, _) => setupWindow = null;
         setupWindow.Show();
+    }
+
+    // Launches the setup window pre-pointed at the ECU passed in (via the
+    // button's CommandParameter binding, usually the row's EcuViewModel). The
+    // setup window has an independent SetupSelectedEcu so we explicitly seed
+    // it - otherwise it would keep whatever ECU was last picked there, which
+    // wouldn't match the inspector the user just clicked from.
+    private bool CanConfigurePids(object? parameter)
+        => parameter is EcuViewModel;
+
+    private void ConfigurePids(object? parameter)
+    {
+        if (parameter is not EcuViewModel ecu) return;
+        SetupSelectedEcu = ecu;
+        OpenSetupWindow();
     }
 
     // ---------------- J2534 registry buttons ----------------
@@ -991,7 +1200,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         // captures from this user's session.
         var logDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "GmEcuSimulator", "bus logs");
+            "GmEcuSimulator", "logs", "bus logs");
         Directory.CreateDirectory(logDir);
         var scriptBase = Path.GetFileNameWithoutExtension(scriptPath);
         var logPath = Path.Combine(

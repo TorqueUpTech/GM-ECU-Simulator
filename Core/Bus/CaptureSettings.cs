@@ -11,7 +11,7 @@ namespace Core.Bus;
 // CaptureDirectory is nullable on purpose. Unit tests construct VirtualBus
 // directly and leave it null - BootloaderCaptureWriter no-ops in that case
 // so the tests don't pollute the user's real captures folder. WPF startup
-// sets the property to %LOCALAPPDATA%\GmEcuSimulator\captures.
+// sets the property to %LOCALAPPDATA%\GmEcuSimulator\logs\captures.
 public sealed class CaptureSettings
 {
     /// <summary>
@@ -37,6 +37,6 @@ public sealed class CaptureSettings
     public static string DefaultDirectory()
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return System.IO.Path.Combine(local, "GmEcuSimulator", "captures");
+        return System.IO.Path.Combine(local, "GmEcuSimulator", "logs", "captures");
     }
 }

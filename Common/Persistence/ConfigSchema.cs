@@ -112,7 +112,7 @@ public sealed class SimulatorConfig
 
 // Persisted bootloader-capture configuration. Slots into
 // SimulatorConfig.BootloaderCapture. Directory is null when the user is happy
-// with the default (%LOCALAPPDATA%\GmEcuSimulator\captures); a non-null value
+// with the default (%LOCALAPPDATA%\GmEcuSimulator\logs\captures); a non-null value
 // overrides CaptureSettings.CaptureDirectory at load time. The legacy
 // Enabled flag from earlier versions is silently dropped on load - capture
 // writes are unconditional now (controlled by directory presence in

@@ -97,12 +97,24 @@ public sealed class BinReplayViewModel : NotifyPropertyChangedBase
 
     private void LoadFile()
     {
+        var settings = AppSettings.Load();
         var picker = new OpenFileDialog
         {
             Filter = "Bin (*.bin)|*.bin|All files|*.*",
             Title = "Pick a .bin to replay",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastBinReplayDir),
         };
         if (picker.ShowDialog() != true) return;
+
+        // Persist the dir as soon as the user confirms a file - mirrors the
+        // Prime Wizard pattern. Saved even on the failure path below so a
+        // bad-bin doesn't drop the user back at Windows' MRU next time.
+        var chosenDir = Path.GetDirectoryName(picker.FileName);
+        if (!string.IsNullOrEmpty(chosenDir))
+        {
+            settings.LastBinReplayDir = chosenDir;
+            settings.Save();
+        }
 
         try
         {

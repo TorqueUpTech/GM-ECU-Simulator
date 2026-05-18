@@ -8,14 +8,16 @@
         xmlns:common="clr-namespace:Common;assembly=EcuSim.Common"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:av="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="av" x:Class="GmEcuSimulator.MainWindow"
+        x:Name="EcuSimMainWindow"
         Title="{Binding WindowTitle, FallbackValue=GM ECU Simulator}"
         Icon="/Resources/app.ico"
         Height="900" Width="1130"
-        MinHeight="710" MinWidth="500"
+        MinHeight="810" MinWidth="600"
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
         <conv:BoolToVisibilityConverter  x:Key="BoolToVis"/>
+        <conv:BoolToGridLengthConverter  x:Key="BoolToGridLength"/>
         <conv:StatusToBrushConverter     x:Key="StatusToBrush"/>
         <conv:AppModeDisplayConverter    x:Key="AppModeDisplay"/>
 
@@ -111,14 +113,13 @@
                         Padding="10,3" Margin="0,0,8,0"
                         VerticalAlignment="Center"
                         WindowChrome.IsHitTestVisibleInChrome="True"
-                        DataContext="{Binding SelectedEcu}"
-                        Visibility="{Binding ConverterParameter=NotNull, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}"
-                        ToolTip="$27 SecurityAccess state of the selected ECU. Green = unlocked, amber = locked, red = lockout in effect.">
-                    <StackPanel Orientation="Horizontal">
+                        Visibility="{Binding ShowsSecurityPill, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}"
+                        ToolTip="$27 SecurityAccess state of the selected ECU. Green = unlocked, amber = locked, red = lockout in effect. In DPS modes the pill stays visible before priming so the user knows where the indicator lives.">
+                    <StackPanel Orientation="Horizontal" DataContext="{Binding SelectedEcu}">
                         <Ellipse Width="8" Height="8" Margin="0,0,8,0"
-                                 Fill="{Binding SecurityStatusText, Converter={StaticResource StatusToBrush}}"
+                                 Fill="{Binding SecurityStatusText, Converter={StaticResource StatusToBrush}, FallbackValue={x:Null}, TargetNullValue={x:Null}}"
                                  VerticalAlignment="Center"/>
-                        <TextBlock Text="{Binding SecurityPillText}"
+                        <TextBlock Text="{Binding SecurityPillText, FallbackValue='No ECU primed', TargetNullValue='No ECU primed'}"
                                    Style="{StaticResource Text.Caption}"
                                    Foreground="{DynamicResource Text.PrimaryBrush}"
                                    VerticalAlignment="Center"/>
@@ -240,14 +241,6 @@
                               IsChecked="{Binding AllowPeriodicTesterPresent, Mode=TwoWay}"
                               ToolTip="When on, the simulator drives $3E TesterPresent on the host's behalf for any frame registered via PassThruStartPeriodicMsg. Off accepts the registration but skips the tick - delegating hosts have to keep their own P3C session alive."/>
                 </MenuItem>
-                <MenuItem Header="_Bin">
-                    <MenuItem Header="_Load info from BIN..."
-                              Command="{Binding SelectedEcu.LoadInfoFromBinCommand}"
-                              ToolTip="Pick a T43/E38/E67 flash image and populate the selected ECU's $1A DIDs by tracing the $1A handler. Walks the dispatcher to find each supported DID's source flash address - no per-family hardcoding. Precedence-aware: DIDs already set by the user or a prior auto-populate are kept."/>
-                    <MenuItem Header="_Auto-populate DIDs"
-                              Command="{Binding SelectedEcu.AutoPopulateDidsCommand}"
-                              ToolTip="Fill every well-known $1A DID on the selected ECU that is currently unset with a placeholder byte sequence (DefaultDidValues). Gets a fresh ECU 'plausible enough' for a tester in one click. DIDs already populated by the user or a prior bin load are left alone."/>
-                </MenuItem>
                 <MenuItem Header="_Log">
                     <!-- Master gate. When unchecked, the four items below grey
                          out (their IsEnabled is bound to IsFileLoggingEnabled).
@@ -259,7 +252,7 @@
                               IsCheckable="True"
                               StaysOpenOnClick="True"
                               IsChecked="{Binding IsFileLoggingEnabled, Mode=TwoWay}"
-                              ToolTip="Stream every bus + diagnostic line to %LOCALAPPDATA%\GmEcuSimulator\bus logs\bus_*.csv on a dedicated background thread. Independent of the 'Log traffic' textbox gate - use when high-volume downloads make the textbox impractical."/>
+                              ToolTip="Stream every bus + diagnostic line to %LOCALAPPDATA%\GmEcuSimulator\logs\bus logs\bus_*.csv on a dedicated background thread. Independent of the 'Log traffic' textbox gate - use when high-volume downloads make the textbox impractical."/>
                     <MenuItem Header="_Open folder…"
                               Click="OnOpenLogFolderClicked"
                               IsEnabled="{Binding IsFileLoggingEnabled}"
@@ -371,7 +364,7 @@
                      code-behind so the row can fully collapse - the constant
                      in MainWindow.xaml.cs (EditorMinHeightNormal) restores
                      it and must stay in sync with this value. -->
-                <RowDefinition x:Name="EditorRow" Height="*" MinHeight="140"/>
+                <RowDefinition x:Name="EditorRow" Height="*" MinHeight="240"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition x:Name="LogRow"    Height="320" MinHeight="80"/>
             </Grid.RowDefinitions>
@@ -455,12 +448,41 @@
                      with them. -->
                 <Border Grid.Column="1" Style="{StaticResource Card}"
                         DataContext="{Binding SelectedEcu}"
+                        MinHeight="240"
                         Visibility="{Binding ConverterParameter=NotNull, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
-                        <DockPanel LastChildFill="True">
-                            <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <!-- Three-row Grid (header / form fields / live PID panel).
+                             When the PID grid is visible (ECU Simulator / DPS modes)
+                             both content rows are "*" so they share the available
+                             pane space; the form row is capped by FormRowMaxHeight
+                             to its natural content height (no empty band when
+                             there is room) and the PID row's MinHeight floors it
+                             at ~ header + 1 DataGrid row. At the pane's MinHeight
+                             that floor forces the form row below its natural size
+                             and the form ScrollViewer's auto vertical scrollbar
+                             reveals the remaining fields - so the inspector shows
+                             only one row of properties at the tightest pane size
+                             but expands to full natural height when there is room.
+                             When the PID grid is hidden (Flash Tool Write) the
+                             second row collapses to Auto and the form row sizes
+                             to content. ElementName binding to the Window is used
+                             because RowDefinition isn't in the visual tree, so
+                             RelativeSource AncestorType doesn't reach it. -->
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="{Binding DataContext.ShowsPidLiveGrid,
+                                                                ElementName=EcuSimMainWindow,
+                                                                Converter={StaticResource BoolToGridLength},
+                                                                ConverterParameter=*|Auto}"
+                                               MinHeight="{Binding DataContext.PidRowMinHeight,
+                                                                   ElementName=EcuSimMainWindow}"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Margin="0,0,0,8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="Selected ECU"
@@ -472,6 +494,14 @@
                                            VerticalAlignment="Center"
                                            Margin="12,0,0,0"/>
                                 <Button Grid.Column="2"
+                                        Content="Configure PIDs..."
+                                        Padding="10,4"
+                                        Margin="0,0,8,0"
+                                        Command="{Binding DataContext.ConfigurePidsCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"
+                                        Visibility="{Binding DataContext.IsEcuSimulatorMode, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}"
+                                        ToolTip="Open the modeless ECU Setup window pointed at this ECU. Edit the PID table (address, name, size, scaling) and per-PID waveform (shape, amplitude, frequency, phase, duty) used to synthesise $22 responses and DPID streams."/>
+                                <Button Grid.Column="3"
                                         Content="Edit prime..."
                                         Padding="10,4"
                                         Command="{Binding EditPrimeCommand}"
@@ -479,7 +509,84 @@
                                         ToolTip="Re-open the DPS Prime Wizard with this ECU's prior selections pre-filled. Replaces the ECU atomically on Apply."/>
                             </Grid>
 
-                                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                <!-- Live PID panel. Shows the ECU's configured PIDs with their
+                                     current waveform-sampled value. Read-only - editing happens
+                                     in the Configure PIDs... dialog. LiveValue updates come from
+                                     the MainWindow refresh timer (10 Hz). Sits in Row 2 of the
+                                     enclosing Grid and takes the * row so it expands upward to
+                                     fill the gap left under the form fields. The DataGrid inside
+                                     scrolls internally if rows exceed the visible area. Hidden in
+                                     Flash Tool Write mode - see MainViewModel.ShowsPidLiveGrid. -->
+                                <Border Grid.Row="2"
+                                        Margin="0,8,0,0"
+                                        Padding="8"
+                                        CornerRadius="4"
+                                        BorderBrush="{DynamicResource Border.SubtleBrush}"
+                                        BorderThickness="1"
+                                        Background="{DynamicResource Chrome.BgBrush}"
+                                        Visibility="{Binding DataContext.ShowsPidLiveGrid, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                                    <DockPanel LastChildFill="True">
+                                        <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="PIDs"
+                                                       Style="{StaticResource Text.Subtitle}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding Pids.Count, StringFormat=\{0\} configured}"
+                                                       Style="{StaticResource Text.Caption}"
+                                                       VerticalAlignment="Center"
+                                                       Margin="12,0,0,0"/>
+                                        </Grid>
+                                        <DataGrid ItemsSource="{Binding Pids}"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  CanUserDeleteRows="False"
+                                                  IsReadOnly="True"
+                                                  HeadersVisibility="Column"
+                                                  GridLinesVisibility="Horizontal"
+                                                  RowHeaderWidth="0"
+                                                  SelectionMode="Single"
+                                                  FontSize="14"
+                                                  HorizontalScrollBarVisibility="Auto"
+                                                  VerticalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Address"
+                                                                    Binding="{Binding AddressHex}"
+                                                                    Width="90">
+                                                    <DataGridTextColumn.ElementStyle>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="FontFamily" Value="{StaticResource Font.Mono}"/>
+                                                        </Style>
+                                                    </DataGridTextColumn.ElementStyle>
+                                                </DataGridTextColumn>
+                                                <DataGridTextColumn Header="Name"
+                                                                    Binding="{Binding Name}"
+                                                                    Width="*" MinWidth="100"/>
+                                                <DataGridTextColumn Header="Unit"
+                                                                    Binding="{Binding Unit}"
+                                                                    Width="60"/>
+                                                <DataGridTextColumn Header="Live"
+                                                                    Binding="{Binding LiveValue}"
+                                                                    Width="90">
+                                                    <DataGridTextColumn.ElementStyle>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="FontFamily" Value="{StaticResource Font.Mono}"/>
+                                                            <Setter Property="HorizontalAlignment" Value="Right"/>
+                                                        </Style>
+                                                    </DataGridTextColumn.ElementStyle>
+                                                </DataGridTextColumn>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </DockPanel>
+                                </Border>
+
+                                <ScrollViewer Grid.Row="1"
+                                              MaxHeight="{Binding DataContext.FormRowMaxHeight,
+                                                                  ElementName=EcuSimMainWindow}"
+                                              VerticalScrollBarVisibility="Auto"
                                               HorizontalScrollBarVisibility="Disabled">
                                     <WrapPanel Orientation="Horizontal">
                                     <WrapPanel.Resources>
@@ -536,7 +643,8 @@
                                                  FontFamily="{StaticResource Font.Mono}"/>
                                     </Grid>
 
-                                    <Grid Style="{StaticResource FormCell}">
+                                    <Grid Style="{StaticResource FormCell}"
+                                          Visibility="{Binding DataContext.ShowsProgrammingFields, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="96"/>
                                             <ColumnDefinition Width="*"/>
@@ -548,7 +656,8 @@
                                                  ToolTip="ISO 15765-2 FlowControl BlockSize (FC.BS). When this ECU receives a First Frame, it replies with FC = 30 BS 00. BS tells the tester how many Consecutive Frames to send before waiting for another FC: 0 = send all CFs in one burst (most permissive, works with most hosts); 1 = send 1 CF then wait for another FC, etc. Set BS=1 for the 6Speed.T43 tester - it sniffs the FC tail for the pattern '01' to recognise a T43 TCM and won't start the kernel upload otherwise."/>
                                     </Grid>
 
-                                    <Grid Style="{StaticResource FormCell}">
+                                    <Grid Style="{StaticResource FormCell}"
+                                          Visibility="{Binding DataContext.ShowsProgrammingFields, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="96"/>
                                             <ColumnDefinition Width="*"/>
@@ -576,9 +685,23 @@
                                                   ToolTip="Seed/key algorithm for this ECU. (none) makes $27 return NRC $11. Runtime state (lock status, attempts, pending seed) lives on the Security tab."/>
                                     </Grid>
 
+                                    <Grid Style="{StaticResource FormCell}"
+                                          Visibility="{Binding DataContext.ShowsSecurityModuleReadOnly, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Sec module"/>
+                                        <TextBox Grid.Column="1" Margin="0,2"
+                                                 Text="{Binding SelectedSecurityModuleId, Mode=OneWay}"
+                                                 IsReadOnly="True"
+                                                 FontFamily="{StaticResource Font.Mono}"
+                                                 ToolTip="Seed/key algorithm picked for this primed ECU. In DPS modes the Prime Wizard owns this choice - re-open the wizard (Edit primed) to change it."/>
+                                    </Grid>
+
                                 </WrapPanel>
                                 </ScrollViewer>
-                        </DockPanel>
+                        </Grid>
                     </Border>
             </Grid>
 
@@ -812,14 +935,14 @@
                         </DockPanel>
                     </TabItem>
 
-                    <!-- Capture Bootloader tab. Captures are written
-                         unconditionally; this tab is a browser/launcher for
-                         the files. Service36Handler anchors on the first $36
-                         address so real-DPS absolute-address sessions work
-                         without any toggle. -->
-                    <TabItem Header="Bootloader"
-                             Visibility="{Binding ShowsBootloaderTab, Converter={StaticResource BoolToVis}}">
-                        <DockPanel DataContext="{Binding CaptureBootloader}" LastChildFill="True">
+                    <!-- Captures tab. Captures are written unconditionally;
+                         this tab is a browser/launcher for the files.
+                         Service36Handler anchors on the first $36 address so
+                         real-DPS absolute-address sessions work without any
+                         toggle. -->
+                    <TabItem Header="Captures"
+                             Visibility="{Binding ShowsCaptureTab, Converter={StaticResource BoolToVis}}">
+                        <DockPanel DataContext="{Binding Capture}" LastChildFill="True">
                             <Border DockPanel.Dock="Top" Style="{StaticResource Toolbar}">
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="Open folder"

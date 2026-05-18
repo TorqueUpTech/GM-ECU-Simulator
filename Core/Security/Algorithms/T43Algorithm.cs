@@ -44,11 +44,10 @@ public sealed class T43Algorithm : ISeedKeyAlgorithm
 {
     private byte[]? fixedSeed;
 
-    public string Id => "gm-t43";
+    public string Id => "gm-t43-2byte";
     public int SeedLength => 2;
     public int KeyLength => 2;
     public IEnumerable<byte> SupportedLevels { get; } = new byte[] { 1 };
-    public ProgrammingSessionBehavior ProgrammingSession => ProgrammingSessionBehavior.UnchangedAlgorithm;
 
     public void GenerateSeed(byte level, Span<byte> seedBuffer, out int seedLength)
     {

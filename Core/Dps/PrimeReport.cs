@@ -28,7 +28,7 @@ public sealed record PrimeReport(
     // ISecurityAccessModule deserialises its own keys from it). The
     // ArchivePrimer leaves this null by default; the Prime Wizard's
     // commit page overrides it when the user picks a module that needs
-    // configuration (e.g. fixedSeed for gm-permissive-5byte).
+    // configuration (e.g. fixedSeed for gm-bypass-5byte).
     JsonElement? SecurityModuleConfig,
     int IdentifierDidCount,
     int PidsKnownFromBin,                 // 535-ish for E38 = E38PidExtractor records found

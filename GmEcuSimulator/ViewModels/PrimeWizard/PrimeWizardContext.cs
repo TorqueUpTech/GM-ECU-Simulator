@@ -36,9 +36,10 @@ public sealed class PrimeWizardContext
     public string? LoadedBinPath { get; set; }
 
     // Page 3 (commit) - security module override. Null means "use the
-    // dataset's default" (currently gm-programming-bypass). The fixed-seed
-    // hex is only meaningful when OverrideSecurityModuleId is
-    // gm-permissive-5byte; for other modules it's ignored at apply time.
+    // dataset's default" (currently gm-bypass-2byte from ArchivePrimer). The
+    // fixed-seed hex is only meaningful when OverrideSecurityModuleId
+    // resolves to a bypass module; for strict modules it's ignored at apply
+    // time (see PrimeWizardViewModel.ApplySecurityOverrides).
     public string? OverrideSecurityModuleId { get; set; }
     public string? OverrideFixedSeedHex { get; set; }
 

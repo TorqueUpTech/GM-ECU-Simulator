@@ -7,6 +7,7 @@
         Height="700" Width="1000"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
+        FontSize="14"
         Style="{StaticResource Window.Dialog}">
 
     <Window.Resources>

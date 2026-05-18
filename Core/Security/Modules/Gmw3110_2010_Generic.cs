@@ -4,44 +4,46 @@ using Common.Protocol;
 namespace Core.Security.Modules;
 
 // The workhorse $27 module. Implements the full GMW3110-2010 SecurityAccess
-// protocol envelope on top of an injected ISeedKeyAlgorithm — most users
+// protocol envelope on top of an injected ISeedKeyAlgorithm - most users
 // only need to write a small algorithm class and let this module handle:
 //   - SID / length / subfunction-byte validation (NRC $12)
-//   - Odd/even subfunction parity → requestSeed vs sendKey, level derivation
+//   - Odd/even subfunction parity -> requestSeed vs sendKey, level derivation
 //   - Supported-level filtering (algo.SupportedLevels, NRC $12 otherwise)
 //   - Seed-all-zero short-circuit when already unlocked at the level
 //   - Pending-seed tracking ($22 if sendKey arrives without matching requestSeed)
 //   - Failed-attempt counter with 3-strike lockout (NRC $35 / $36 / $37)
 //   - Self-healing lockout: deadline timestamp compared against ctx.NowMs;
 //     no scheduled timer required.
-//   - Algorithm policy ProgrammingSessionBehavior.BypassAll: every $27 step
-//     short-circuits to a positive response (seed=00 00, any key unlocks)
-//     while NodeState.SecurityProgrammingShortcutActive is true (set by
-//     either $10 $02 directly or by the full GMW3110 $28 + $A5 chain).
-//     Models the T43 boot-block stub (file offset 0x2BBFC in a 24264923
-//     image) that 6Speed.T43 actually targets. Algorithms with the default
-//     ProgrammingSessionBehavior keep enforcing real seed/key in programming
-//     session (E38, E67, etc.). Pair with the gm-programming-bypass module
-//     selection on an ECU to model stub-security $27 levels.
+//
+// Behaviour is set per-module at construction time, not on the cipher: the
+// same cipher class is reusable in both Strict and BypassAll wrappers. When
+// Behaviour == BypassAll every $27 step short-circuits to a positive
+// response (seed=00 00, any key unlocks) regardless of session state. Pair
+// with a RandomSeedCipher to model "let any tester through" ECUs (the
+// gm-bypass-2byte / gm-bypass-5byte registry entries).
 //
 // Locking: every Handle() call takes ctx.State.Sync for the duration of the
 // step so concurrent J2534 channels targeting the same ECU don't interleave
 // security mutations.
 public sealed class Gmw3110_2010_Generic : ISecurityAccessModule
 {
-    private const int LockoutDurationMs = 10_000;        // GMW3110-2010 §8 SecurityAccess — verify exact wording against your PDF
+    private const int LockoutDurationMs = 10_000;        // GMW3110-2010 §8 SecurityAccess
     private const int MaxAttemptsBeforeLockout = 3;
 
     private readonly ISeedKeyAlgorithm algorithm;
 
     public string Id { get; }
 
-    public ProgrammingSessionBehavior ProgrammingSession => algorithm.ProgrammingSession;
+    public SecurityModuleBehaviour Behaviour { get; }
 
-    public Gmw3110_2010_Generic(ISeedKeyAlgorithm algorithm, string? id = null)
+    public Gmw3110_2010_Generic(
+        ISeedKeyAlgorithm algorithm,
+        string? id = null,
+        SecurityModuleBehaviour behaviour = SecurityModuleBehaviour.Strict)
     {
         this.algorithm = algorithm;
         Id = id ?? $"gmw3110-2010/{algorithm.Id}";
+        Behaviour = behaviour;
     }
 
     public void LoadConfig(JsonElement? config) => algorithm.LoadConfig(config);
@@ -68,16 +70,11 @@ public sealed class Gmw3110_2010_Generic : ISecurityAccessModule
         // the lockout state, the seed/key validation, the failed-attempt
         // counter - the wire trace still shows the normal two-step handshake
         // (positive seed response, positive sendKey response) but nothing is
-        // actually validated. Used to model stub-security ECUs.
-        //
-        // Driven automatically when ProgrammingModeActive + algorithm's
-        // ProgrammingSession == BypassAll: models the T43 boot-block stub
-        // (and the gm-programming-bypass module) once $10 $02 (or the full
-        // $28+$A5 chain) has put the ECU into a programming session.
-        if (ctx.State.SecurityProgrammingShortcutActive
-            && algorithm.ProgrammingSession == ProgrammingSessionBehavior.BypassAll)
+        // actually validated. Always-on once the module is constructed with
+        // BypassAll; no session-state gating.
+        if (Behaviour == SecurityModuleBehaviour.BypassAll)
         {
-            HandleBypass(ctx, sub, level, isRequestSeed, "programming session + algorithm BypassAll policy");
+            HandleBypass(ctx, sub, level, isRequestSeed);
             return;
         }
 
@@ -101,7 +98,7 @@ public sealed class Gmw3110_2010_Generic : ISecurityAccessModule
                 ctx.Egress.SendNegativeResponse(Nrc.RequiredTimeDelayNotExpired);
                 return;
             }
-            // Lockout deadline has elapsed but counters weren't reset — reset now.
+            // Lockout deadline has elapsed but counters weren't reset - reset now.
             if (state.SecurityLockoutUntilMs != 0)
             {
                 state.SecurityLockoutUntilMs = 0;
@@ -113,7 +110,7 @@ public sealed class Gmw3110_2010_Generic : ISecurityAccessModule
         }
     }
 
-    private void HandleBypass(SecurityAccessContext ctx, byte sub, byte level, bool isRequestSeed, string reason)
+    private void HandleBypass(SecurityAccessContext ctx, byte sub, byte level, bool isRequestSeed)
     {
         var state = ctx.State;
         lock (state.Sync)
@@ -134,7 +131,7 @@ public sealed class Gmw3110_2010_Generic : ISecurityAccessModule
                 state.SecurityFailedAttempts = 0;
                 state.SecurityLockoutUntilMs = 0;
                 ctx.Channel.Bus?.LogSim?.Invoke(
-                    $"[$27 BYPASS] ECU '{ctx.Node.Name}' requestSeed sub=${sub:X2} level={level} -> seed=00 00, unlocked ({reason})");
+                    $"[$27 BYPASS] ECU '{ctx.Node.Name}' requestSeed sub=${sub:X2} level={level} -> seed=00 00, unlocked (module Behaviour=BypassAll)");
                 ctx.Egress.SendPositiveResponse(sub, zeros);
             }
             else
@@ -145,7 +142,7 @@ public sealed class Gmw3110_2010_Generic : ISecurityAccessModule
                 state.SecurityFailedAttempts = 0;
                 state.SecurityLockoutUntilMs = 0;
                 ctx.Channel.Bus?.LogSim?.Invoke(
-                    $"[$27 BYPASS] ECU '{ctx.Node.Name}' sendKey sub=${sub:X2} level={level} -> unlocked, key ignored ({reason})");
+                    $"[$27 BYPASS] ECU '{ctx.Node.Name}' sendKey sub=${sub:X2} level={level} -> unlocked, key ignored (module Behaviour=BypassAll)");
                 ctx.Egress.SendPositiveResponse(sub, ReadOnlySpan<byte>.Empty);
             }
         }
@@ -162,7 +159,7 @@ public sealed class Gmw3110_2010_Generic : ISecurityAccessModule
 
         var state = ctx.State;
 
-        // Already unlocked at (or above) this level — return seed-all-zero.
+        // Already unlocked at (or above) this level - return seed-all-zero.
         // Per the spec this is the signal "no further authentication needed".
         if (state.IsUnlocked(level))
         {
@@ -176,7 +173,7 @@ public sealed class Gmw3110_2010_Generic : ISecurityAccessModule
         algorithm.GenerateSeed(level, seedBuf, out int seedLen);
         if (seedLen <= 0 || seedLen > bufLen)
         {
-            // Algorithm misbehaviour — treat as "no seed available".
+            // Algorithm misbehaviour - treat as "no seed available".
             ctx.Egress.SendNegativeResponse(Nrc.ConditionsNotCorrectOrSequenceError);
             return;
         }
@@ -241,7 +238,7 @@ public sealed class Gmw3110_2010_Generic : ISecurityAccessModule
         if (state.SecurityFailedAttempts >= MaxAttemptsBeforeLockout)
         {
             state.SecurityLockoutUntilMs = ctx.NowMs + LockoutDurationMs;
-            // Lockout invalidates any pending seed — tester must requestSeed
+            // Lockout invalidates any pending seed - tester must requestSeed
             // again after the deadline expires.
             state.SecurityPendingSeedLevel = 0;
             state.SecurityLastIssuedSeed = null;

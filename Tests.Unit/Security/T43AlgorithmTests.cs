@@ -88,31 +88,26 @@ public sealed class T43AlgorithmTests
                      TestFrame.DequeueSingleFrameUsdt(ch));
     }
 
-    // ----- Programming-session policy -----
+    // ----- Programming-session behaviour -----
     //
     // The real T43 boot block is sometimes permissive (issues seed 00 00,
     // accepts key 00 00) but not always - 6Speed.T43 Program.cs:1152/2063
     // calls gett43key whenever the bootloader replies with a non-zero seed.
-    // So the algorithm runs in programming mode too, and the policy is
-    // UnchangedAlgorithm. The 0000/0000 path is exposed by configuring
-    // fixedSeed = "0000".
-
-    [Fact]
-    public void Policy_DeclaresUnchangedAlgorithm()
-    {
-        Assert.Equal(ProgrammingSessionBehavior.UnchangedAlgorithm, new T43Algorithm().ProgrammingSession);
-    }
+    // Wrap T43Algorithm in a Strict module (the default) to model the
+    // always-runs-the-cipher path. The 00 00 / 00 00 stub path is reachable
+    // via a separate Gmw3110_2010_Generic + RandomSeedCipher wrapper with
+    // SecurityModuleBehaviour.BypassAll.
 
     [Fact]
     public void EndToEnd_ProgrammingMode_NonZeroSeed_RequiresRealKey()
     {
-        // With UnchangedAlgorithm, $10 $02 does not weaken security. A
+        // With Strict behaviour, $10 $02 does not weaken security. A
         // non-zero seed still demands the gett43key-computed key, mirroring
         // 6Speed.T43's gett43key branch at Program.cs:1159.
         var algo = new T43Algorithm();
         algo.LoadConfig(JsonSerializer.SerializeToElement(new { fixedSeed = "1234" }));
         var node = NodeFactory.CreateNode(
-            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-t43"));
+            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-t43-2byte"));
         var ch = NodeFactory.CreateChannel();
 
         Service10Handler.Handle(node, new byte[] { 0x10, 0x02 }, ch);
@@ -122,7 +117,7 @@ public sealed class T43AlgorithmTests
         Assert.Equal(new byte[] { Service.Positive(Service.SecurityAccess), 0x01, 0x12, 0x34 },
                      TestFrame.DequeueSingleFrameUsdt(ch));
 
-        // Hardcoded 00 00 would unlock under BypassAll - under UnchangedAlgorithm it gets NRC $35.
+        // Hardcoded 00 00 would unlock under BypassAll - under Strict it gets NRC $35.
         Service27Handler.Handle(node, new byte[] { 0x27, 0x02, 0x00, 0x00 }, ch, nowMs: 0);
         Assert.Equal(new byte[] { Service.NegativeResponse, Service.SecurityAccess, Nrc.InvalidKey },
                      TestFrame.DequeueSingleFrameUsdt(ch));

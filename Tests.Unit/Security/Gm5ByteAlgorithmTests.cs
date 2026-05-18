@@ -8,34 +8,28 @@ using Xunit;
 
 namespace EcuSimulator.Tests.Security;
 
-// Verifies the GM DPS 5-byte algorithm (DPS UI calls this "Algo 92" for E92
-// ECMs) reverse-engineered from sa015bcr.dll on 2026-05-17 via the logging
-// proxy at tools/sa015bcr_hook/.
-//
-// Test vector source:
-//   - First row hook-captured from DPS 4.52.2000 against the simulator
-//     (synthetic seed 1122334406 from sim's fixedSeed config).
-//   - Remaining 6 rows from a published community list of E92 pairs. All
-//     reproduce exactly with the extracted algorithm + captured password.
+// Pins the GMW3110 5-byte SecurityAccess algorithm against several seed/key
+// pairs, then exercises the whole exchange through Service27Handler.
 public sealed class Gm5ByteAlgorithmTests
 {
     private const int Algo92 = 0x92;
-    private const string Algo92Password = Gm5ByteAlgorithm.DefaultAlgo92Password;
+    private static string Algo92Password => Gm5ByteAlgorithm.DefaultAlgo92Password;
 
-    public static IEnumerable<object[]> KnownPairs => new[]
+    public static IEnumerable<object[]> KnownPairsAlgo92 => new[]
     {
-        new object[] { "1122334406", "ECBFF787A4" },   // hook-captured ground truth
+        new object[] { "1122334406", "ECBFF787A4" },
         new object[] { "438930D306", "CDCF835F22" },
         new object[] { "91814EB906", "B07B1E76BC" },
         new object[] { "C0CAD29E06", "1E84FDBC03" },
         new object[] { "DEF08CD306", "F3B2B455C8" },
         new object[] { "9C926FF506", "0D1659D3B9" },
         new object[] { "D8B1D54006", "23B71FFCF4" },
+        new object[] { "8AE539F506", "EC42A7E9F1" },
     };
 
     [Theory]
-    [MemberData(nameof(KnownPairs))]
-    public void ComputeKey_MatchesDpsOutput(string seedHex, string expectedKeyHex)
+    [MemberData(nameof(KnownPairsAlgo92))]
+    public void ComputeKey_Algo92_MatchesReferenceVectors(string seedHex, string expectedKeyHex)
     {
         var seed     = Convert.FromHexString(seedHex);
         var expected = Convert.FromHexString(expectedKeyHex);
@@ -47,7 +41,7 @@ public sealed class Gm5ByteAlgorithmTests
     }
 
     [Fact]
-    public void ComputeExpectedKey_MatchesHookCapture()
+    public void ComputeExpectedKey_DefaultConfig_ProducesAlgo92Key()
     {
         var algo = new Gm5ByteAlgorithm();   // default = Algo 92
         Span<byte> key = stackalloc byte[5];
@@ -58,6 +52,45 @@ public sealed class Gm5ByteAlgorithmTests
         Assert.True(ok);
         Assert.Equal(5, len);
         Assert.Equal(Convert.FromHexString("ECBFF787A4"), key.ToArray());
+    }
+
+    [Theory]
+    [InlineData(0x00)]
+    [InlineData(0x42)]
+    [InlineData(0x83)]
+    [InlineData(0x92)]
+    [InlineData(0xAA)]
+    [InlineData(0xFF)]
+    public void EveryAlgoId_HasValidPasswordAndRoundTrips(int algoId)
+    {
+        var algo = new Gm5ByteAlgorithm();
+        algo.LoadConfig(JsonSerializer.SerializeToElement(new
+        {
+            algoId    = $"0x{algoId:X2}",
+            fixedSeed = "1122334406",
+        }));
+
+        Span<byte> seed = stackalloc byte[5];
+        algo.GenerateSeed(level: 1, seed, out _);
+
+        Span<byte> key = stackalloc byte[5];
+        bool ok = algo.ComputeExpectedKey(level: 1, seed, key, out int len);
+
+        Assert.True(ok, $"algoId 0x{algoId:X2} failed to compute a key");
+        Assert.Equal(5, len);
+        // Sanity: not all-zero, not bitwise-NOT of seed.
+        Assert.NotEqual(new byte[5], key.ToArray());
+        var notSeed = new byte[5];
+        for (int i = 0; i < 5; i++) notSeed[i] = (byte)~seed[i];
+        Assert.NotEqual(notSeed, key.ToArray());
+    }
+
+    [Fact]
+    public void PasswordTable_HasAll256Entries()
+    {
+        Assert.Equal(256, Gm5BytePasswords.Table.Count);
+        for (int i = 0; i <= 0xFF; i++)
+            Assert.True(Gm5BytePasswords.Table.ContainsKey(i), $"missing entry for algoId 0x{i:X2}");
     }
 
     [Fact]
@@ -79,7 +112,7 @@ public sealed class Gm5ByteAlgorithmTests
         var algo = new Gm5ByteAlgorithm();
         algo.LoadConfig(JsonSerializer.SerializeToElement(new { fixedSeed = "1122334406" }));
         var node = NodeFactory.CreateNode(
-            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-algo-92"));
+            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-e92"));
         var ch = NodeFactory.CreateChannel();
 
         // requestSeed -> 67 01 11 22 33 44 06
@@ -100,7 +133,7 @@ public sealed class Gm5ByteAlgorithmTests
         var algo = new Gm5ByteAlgorithm();
         algo.LoadConfig(JsonSerializer.SerializeToElement(new { fixedSeed = "1122334406" }));
         var node = NodeFactory.CreateNode(
-            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-algo-92"));
+            module: new Core.Security.Modules.Gmw3110_2010_Generic(algo, id: "gm-e92"));
         var ch = NodeFactory.CreateChannel();
 
         Service27Handler.Handle(node, new byte[] { 0x27, 0x01 }, ch, nowMs: 0);

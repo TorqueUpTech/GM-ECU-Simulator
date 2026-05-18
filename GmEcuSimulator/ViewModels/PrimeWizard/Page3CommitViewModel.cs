@@ -10,20 +10,16 @@ namespace GmEcuSimulator.ViewModels.PrimeWizard;
 // runs from PrimeWizardViewModel.Apply.
 public sealed class Page3CommitViewModel : NotifyPropertyChangedBase
 {
-    // The one module whose config field we surface in the wizard. Other
-    // modules either need no config (most) or expose richer per-key
-    // options that belong in the main editor's key/value grid.
-    private const string PermissiveModuleId = "gm-permissive-5byte";
-
-    // Default fixed seed for the permissive 5-byte algorithm. Trailing 0x06 is
-    // the E92 family byte DPS's algo-92 cipher in sale.dll keys off; the first
-    // four bytes are just memorable filler.
-    private const string DefaultPermissiveSeed = "11 22 33 44 06";
+    // Default fixed seed used when the user picks a 5-byte bypass module
+    // without supplying their own seed. Trailing 0x06 is the E92 family byte
+    // DPS's algo-92 cipher in sale.dll keys off; the first four bytes are
+    // just memorable filler.
+    private const string DefaultBypass5ByteSeed = "11 22 33 44 06";
 
     private readonly PrimeWizardContext context;
     private string archiveLine = "(none)";
     private string loadedBinLine = "(none)";
-    private string selectedSecurityModule = "gm-programming-bypass";
+    private string selectedSecurityModule = "gm-bypass-2byte";
     private string fixedSeedHex = "";
     private bool suppressContextWrites;     // OnEnter rehydration must not double-fire writes
     private int totalRows;
@@ -44,15 +40,16 @@ public sealed class Page3CommitViewModel : NotifyPropertyChangedBase
     public string ArchiveLine    { get => archiveLine;    private set => SetField(ref archiveLine, value); }
     public string LoadedBinLine  { get => loadedBinLine;  private set => SetField(ref loadedBinLine, value); }
 
-    /// <summary>Dropdown contents — every module the registry knows about.</summary>
+    /// <summary>Dropdown contents - every module the registry knows about.</summary>
     public IReadOnlyList<string> AvailableSecurityModules { get; }
 
     /// <summary>
     /// Two-way bound to the security-module ComboBox. Setting it both updates
     /// the field and pushes the override into the wizard context so the
     /// Apply step picks it up. Side-effect: clears FixedSeedHex when switching
-    /// away from gm-permissive-5byte (other modules don't use it; keeping
-    /// stale text around would be confusing).
+    /// to a non-bypass module (other modules don't use it; keeping stale text
+    /// around would be confusing); preloads a default when switching to a
+    /// 5-byte bypass module so the user can hit Apply without hunting.
     /// </summary>
     public string SelectedSecurityModule
     {
@@ -62,13 +59,12 @@ public sealed class Page3CommitViewModel : NotifyPropertyChangedBase
             if (!SetField(ref selectedSecurityModule, value)) return;
             if (!suppressContextWrites) context.OverrideSecurityModuleId = value;
             OnPropertyChanged(nameof(IsFixedSeedVisible));
-            if (value == PermissiveModuleId && string.IsNullOrWhiteSpace(fixedSeedHex))
+            if (IsBypassModule(value))
             {
-                // Preload a sensible default so the user can hit Apply without
-                // hunting for a valid seed. They can edit or clear it.
-                FixedSeedHex = DefaultPermissiveSeed;
+                if (string.IsNullOrWhiteSpace(fixedSeedHex) && Is5ByteBypassModule(value))
+                    FixedSeedHex = DefaultBypass5ByteSeed;
             }
-            else if (value != PermissiveModuleId && !string.IsNullOrEmpty(fixedSeedHex))
+            else if (!string.IsNullOrEmpty(fixedSeedHex))
             {
                 // Reset stale text so users don't see a value that won't apply.
                 FixedSeedHex = "";
@@ -77,11 +73,10 @@ public sealed class Page3CommitViewModel : NotifyPropertyChangedBase
     }
 
     /// <summary>
-    /// Two-way bound to the fixed-seed TextBox. 10 hex chars (5 bytes), with
-    /// optional "0x" prefix. Free-form input - the module's LoadConfig is the
-    /// source of truth for validation, so an invalid value here simply means
-    /// the module falls back to random-seed mode (its existing behaviour when
-    /// fixedSeed is absent).
+    /// Two-way bound to the fixed-seed TextBox. Free-form input - the module's
+    /// LoadConfig is the source of truth for validation, so an invalid value
+    /// here simply means the module falls back to random-seed mode (its
+    /// existing behaviour when fixedSeed is absent).
     /// </summary>
     public string FixedSeedHex
     {
@@ -90,8 +85,9 @@ public sealed class Page3CommitViewModel : NotifyPropertyChangedBase
         {
             if (!SetField(ref fixedSeedHex, value ?? "")) return;
             // Keep the displayed text readable ("11 22 33 44 06") but hand the
-            // module a contiguous hex string - LoadConfig parses 10 chars only,
-            // so any internal whitespace would silently reject the value.
+            // module a contiguous hex string. RandomSeedCipher's LoadConfig
+            // tolerates whitespace too, but stripping here keeps the persisted
+            // context value canonical.
             if (!suppressContextWrites)
                 context.OverrideFixedSeedHex = StripWhitespace(fixedSeedHex);
         }
@@ -106,7 +102,23 @@ public sealed class Page3CommitViewModel : NotifyPropertyChangedBase
         return new string(buf, 0, n);
     }
 
-    public bool IsFixedSeedVisible => SelectedSecurityModule == PermissiveModuleId;
+    public bool IsFixedSeedVisible => IsBypassModule(SelectedSecurityModule);
+
+    // Probes the registry to ask the module itself whether it's a bypass
+    // module - keeps the gate honest if new bypass IDs get added later.
+    private static bool IsBypassModule(string? moduleId)
+    {
+        if (string.IsNullOrEmpty(moduleId)) return false;
+        var module = SecurityModuleRegistry.Create(moduleId);
+        return module?.Behaviour == SecurityModuleBehaviour.BypassAll;
+    }
+
+    // Convention: bypass module IDs end in "-{width}byte". Used only to decide
+    // whether to preload the 5-byte default seed; everything else asks the
+    // module via IsBypassModule.
+    private static bool Is5ByteBypassModule(string? moduleId)
+        => IsBypassModule(moduleId)
+           && moduleId!.EndsWith("-5byte", StringComparison.OrdinalIgnoreCase);
 
     public int TotalRows         { get => totalRows;         private set => SetField(ref totalRows, value); }
     public int BytecodeRows      { get => bytecodeRows;      private set => SetField(ref bytecodeRows, value); }
@@ -138,7 +150,7 @@ public sealed class Page3CommitViewModel : NotifyPropertyChangedBase
         {
             SelectedSecurityModule = context.OverrideSecurityModuleId
                                      ?? context.Dataset?.Report.SecurityModuleId
-                                     ?? "gm-programming-bypass";
+                                     ?? "gm-bypass-2byte";
             FixedSeedHex = context.OverrideFixedSeedHex ?? "";
         }
         finally
@@ -146,14 +158,14 @@ public sealed class Page3CommitViewModel : NotifyPropertyChangedBase
             suppressContextWrites = false;
         }
 
-        // First entry with a permissive module and no user override: preload
-        // the default so Apply has something to send. Goes through the setter
-        // (not the field) so the value propagates into the context.
-        if (SelectedSecurityModule == PermissiveModuleId
+        // First entry with a 5-byte bypass module and no user override:
+        // preload the default so Apply has something to send. Goes through the
+        // setter (not the field) so the value propagates into the context.
+        if (Is5ByteBypassModule(SelectedSecurityModule)
             && string.IsNullOrWhiteSpace(fixedSeedHex)
             && context.OverrideFixedSeedHex is null)
         {
-            FixedSeedHex = DefaultPermissiveSeed;
+            FixedSeedHex = DefaultBypass5ByteSeed;
         }
 
         var manifest = context.EditedManifest ?? context.Dataset?.Phase3;

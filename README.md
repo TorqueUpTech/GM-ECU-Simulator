@@ -31,20 +31,23 @@ Modern GM diagnostic stacks (Tech 2 Win, GDS, SPS) typically use ISO15765; legac
 
 `$27` is implemented behind a two-layer plug-in interface so different GM seed-key flavours can be slotted in per-ECU without touching the dispatcher:
 
-* **`ISecurityAccessModule`** - owns a whole `$27` exchange step. The bundled `Gmw3110_2010_Generic` module covers the GMW3110-2010 protocol envelope (length validation, subfunction parity, pending-seed tracking, 3-strike lockout with 10s deadline-timestamp recovery, NRC `$12` / `$22` / `$35` / `$36` / `$37` paths).
+* **`ISecurityAccessModule`** - owns a whole `$27` exchange step. The bundled `Gmw3110_2010_Generic` module covers the GMW3110-2010 protocol envelope (length validation, subfunction parity, pending-seed tracking, 3-strike lockout with 10s deadline-timestamp recovery, NRC `$12` / `$22` / `$35` / `$36` / `$37` paths). The module's `SecurityModuleBehaviour` (`Strict` or `BypassAll`) is set at construction time and is orthogonal to the cipher - the same cipher class can be wired into either.
 * **`ISeedKeyAlgorithm`** - the small strategy you usually write. \~30 lines. `Gmw3110_2010_Generic` wraps one and handles everything else.
 
-Ships with five algorithms registered out of the box, selectable per-ECU in the **Security** tab:
+Ships with six modules registered out of the box, on a `gm-{ecmFamily}-{width}` / `gm-bypass-{width}` axis. Strict entries are named for the ECM family they target - the community "Algo 92" / "Algo 89" attribution is too unsourced to be load-bearing in the ID:
 
-* `gmw3110-2010-not-implemented` - deterministic seed `[0x12, 0x34]`, refuses every key. Exercises every NRC path against any J2534 host without committing real algorithm math.
-* `gm-algo-92` - GM DPS "Algo 92" (E92-family ECMs): 5-byte seed, 5-byte key. Reverse-engineered from `sale.dll` + `sa015bcr.dll` on 2026-05-17 via a logging proxy (`tools/sa015bcr_hook/`) and verified against 7 known seed/key pairs. Defaults to the E92 password captured from DPS 4.52.2000; override with `password` / `algoId` / `familyByte` / `fixedSeed` in `SecurityModuleConfig`.
-* `gm-t43` - GM T43 TCM (6T70 family) seed/key algorithm decompiled from 6Speed.T43's `gett43key`. 2-byte seed, 2-byte key. The GM-assigned algorithm number is not yet documented; rename to `gm-algo-NN` once a TCM utility file or vendor doc confirms it.
-* `gm-programming-bypass` - permissive boot-block stub: declares `ProgrammingSessionBehavior.BypassAll` so an ECU in programming mode (after `$10 $02` or `$A5 $03`) returns seed `00 00` and accepts any key. For development / hand-built utility-file demos where real key math is out of scope.
-* `gm-permissive-5byte` - emits a real non-zero 5-byte seed, accepts any key. Use for new ECU families whose password we haven't captured yet, or tests that want to bypass verification.
+| Module ID | Seed/Key | Cipher | Behaviour |
+|---|---|---|---|
+| `gm-e38-2byte` | 2/2 | E38 ECM via non-DPS testers (HPT, EFILive, jakka351). `k = ~(bswap(s)+0x7D58)+0x8001`. Community-tagged "GMLAN 0x92" but the algorithm-number attribution is unsourced. | Strict |
+| `gm-e92-5byte` | 5/5 | E92-family ECMs via DPS. Reverse-engineered from `sale.dll` + `sa015bcr.dll` on 2026-05-17 via a logging proxy (`tools/sa015bcr_hook/`) and verified against 7 known seed/key pairs. The "92" is grounded in the actual `algoId` byte DPS utility files for this family carry. Defaults to the E92 password captured from DPS 4.52.2000; override with `password` / `algoId` / `familyByte` / `fixedSeed` in `SecurityModuleConfig`. | Strict |
+| `gm-e67-2byte` | 2/2 | E67 ECM. Extracted from PowerPCM_Flasher's `KeyAlgoGm_$89` (RVA 0x6670); brute-force-distinct from `gm-e38-2byte` over all 65536 seeds despite both being community-tagged "GMLAN". | Strict |
+| `gm-t43-2byte` | 2/2 | T43 TCM (6T70 family) `gett43key`, ported from 6Speed.T43 FOSS source. GM algorithm number not yet documented. | Strict |
+| `gm-bypass-2byte` | 2/2 | `RandomSeedCipher(2)`. Emits a non-zero random seed (or `fixedSeed` config) and accepts any key. | BypassAll |
+| `gm-bypass-5byte` | 5/5 | `RandomSeedCipher(5)`. Same, 5-byte width for DPS Enhanced 5-byte utility files whose algorithm we haven't captured yet. | BypassAll |
 
-For stub-security levels seen on real hardware (e.g. T43 TCM at level 1), select the `gm-programming-bypass` module on the ECU. It short-circuits `$27` while the ECU is in a programming session (seed `00 00`, any key accepted).
+For stub-security ECUs (T43 boot block, "let any tester through" test scenarios) select one of the `gm-bypass-*` modules. They short-circuit `$27` unconditionally - no session-state gating - so requestSeed returns seed `00 00` (DPS / CCRT "already unlocked" convention) and any sendKey is accepted.
 
-Each ECU's chosen module ID + module config blob persist to `ecu_config.json`. Schema is currently at version 11; older configs still load with missing fields falling back to documented defaults (FC.BS / FC.STmin = 0, `$36` address byte count = 4, BootloaderCapture disabled, no security module -> `$27` returns NRC `$11`). The pre-v11 per-ECU `BypassSecurity` flag is silently dropped on load - users who relied on it should switch the affected ECU to `gm-programming-bypass`.
+Each ECU's chosen module ID + module config blob persist to `ecu_config.json`. Legacy IDs from every prior naming pass (the original family names `gm-e38` / `gm-e67` / `gm-t43` / `gm-e92`, the brief algo-axis names `gm-algo92-2byte` / `gm-algo89-2byte` / `gm-algo92-5byte` / `gm-algo-92`, and the behaviour-named bypass entries `gm-programming-bypass` / `gm-permissive-5byte` / `gmw3110-2010-not-implemented`) are remapped to their current equivalents at load time via `SecurityModuleRegistry.NormaliseLegacyId`. Schema is currently at version 11; older configs still load with missing fields falling back to documented defaults (FC.BS / FC.STmin = 0, `$36` address byte count = 4, BootloaderCapture disabled, no security module -> `$27` returns NRC `$11`). The pre-v11 per-ECU `BypassSecurity` flag is silently dropped on load - users who relied on it should switch the affected ECU to `gm-bypass-2byte`.
 
 See [`docs/Adding a Security Access ($27) Module.md`](<docs/Adding a Security Access (\$27) Module.md>) for a step-by-step walkthrough of writing a new algorithm, using the E38 algorithm as the worked example.
 
@@ -96,7 +99,7 @@ Either click **J2534 -> Register as J2534 device...** in the app's menu bar (UAC
 3. Press **Ctrl+Shift+P** (or **View -> Setup window\...**) to open the modeless **Setup window** for editing PIDs and waveforms. Each PID gets a waveform (or pulls from a `.bin` replay), a scalar / offset, a unit string, and a size (Byte / Word / DWord). The **Live** column shows the current synthesised value.
 4. Launch your J2534 host. "GM ECU Simulator" appears in its device dropdown. The shim is `LoadLibrary`'d into the host process and forwards every PassThru call to the simulator.
 5. The **Bus log** tab shows live CAN frames (Tx/Rx) on the left and J2534 control-plane calls (Open / Connect / Filter / ReadMsgs / ...) on the right. The **Download** tab shows the programming-flow traffic-light tree for the selected ECU. The **Bootloader** tab toggles `$36`-payload capture to disk.
-6. The **Log** menu enables a streaming file-log sink that writes to `%LOCALAPPDATA%\GmEcuSimulator\bus logs\bus_*.csv` on a background thread. Use this for long captures - the in-window textbox doesn't virtualise and can freeze the GUI at high message rates.
+6. The **Log** menu enables a streaming file-log sink that writes to `%LOCALAPPDATA%\GmEcuSimulator\logs\bus logs\bus_*.csv` on a background thread. Use this for long captures - the in-window textbox doesn't virtualise and can freeze the GUI at high message rates.
 
 ![1.00](docs/screenshots/bus-log.png)
 

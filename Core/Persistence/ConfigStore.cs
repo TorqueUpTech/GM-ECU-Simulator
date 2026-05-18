@@ -20,33 +20,74 @@ public static class ConfigStore
 {
     private static string ConfigDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "GmEcuSimulator");
+        "GmEcuSimulator", "config");
 
     /// <summary>
-    /// Per-mode auto-load / auto-save path under %LocalAppData%\GmEcuSimulator\.
-    /// Each persistable mode owns its own file so DPS, Flash-Tool, and ECU
-    /// Simulator state stay separate worlds. DPS modes get a path too, but
-    /// the App lifecycle skips reading / auto-writing it - the path exists
-    /// only so manual File > Save has a target.
+    /// Per-mode auto-load / auto-save path under
+    /// %LocalAppData%\GmEcuSimulator\config\. Each persistable mode owns its
+    /// own file so DPS, Flash-Tool, and ECU Simulator state stay separate
+    /// worlds. DPS modes get a path too, but the App lifecycle skips reading
+    /// / auto-writing it - the path exists only so manual File > Save has a
+    /// target.
     /// </summary>
     public static string PathForMode(AppMode mode)
-        => Path.Combine(ConfigDirectory, mode.ConfigFileName());
+    {
+        Directory.CreateDirectory(ConfigDirectory);
+        return Path.Combine(ConfigDirectory, mode.ConfigFileName());
+    }
 
     /// <summary>
-    /// One-time rename of the legacy <c>config.json</c> to the new ECU
-    /// Simulator mode filename. Runs at startup so users upgrading across
-    /// this change keep their saved ECUs without manual intervention. Skips
-    /// the rename when the target already exists (preserves whichever the
-    /// user has been writing to most recently).
+    /// Idempotent startup migration. Covers two upgrades:
+    /// <list type="bullet">
+    /// <item>The original single-file <c>config.json</c> at the
+    /// <c>%LocalAppData%\GmEcuSimulator\</c> root, renamed to the per-mode
+    /// <c>ecu_simulator_config.json</c> when the multi-mode layout shipped.</item>
+    /// <item>The flat per-mode + <c>settings.json</c> + <c>layout.xml</c>
+    /// files at the same root, relocated into the new
+    /// <c>%LocalAppData%\GmEcuSimulator\config\</c> subfolder so all config
+    /// state sits together. Sibling of the <c>logs\</c> subfolder.</item>
+    /// </list>
+    /// Skips any move whose target already exists - that preserves whichever
+    /// the user has been writing to most recently and never overwrites.
     /// </summary>
     public static void MigrateLegacyConfigFile()
     {
         try
         {
-            var legacy = Path.Combine(ConfigDirectory, "config.json");
+            var oldRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "GmEcuSimulator");
+            Directory.CreateDirectory(ConfigDirectory);
+
+            // 1. Original single-file legacy rename, kept for installs that
+            //    still have config.json sitting around. Target is the new
+            //    per-mode filename inside config\.
+            var legacy = Path.Combine(oldRoot, "config.json");
             var target = PathForMode(AppMode.EcuSimulator);
             if (File.Exists(legacy) && !File.Exists(target))
                 File.Move(legacy, target);
+
+            // 2. Flat-root -> config\ relocation. Every config-shaped file
+            //    that used to live directly under GmEcuSimulator\ moves
+            //    into config\ keeping its filename. Safe to run on every
+            //    startup: the move is skipped when source is absent or
+            //    destination already exists.
+            string[] flatRootConfigs = {
+                "settings.json",
+                "layout.xml",
+                "ecu_simulator_config.json",
+                "dps_write_config.json",
+                "dps_read_config.json",
+                "flash_write_config.json",
+                "flash_read_config.json",
+            };
+            foreach (var name in flatRootConfigs)
+            {
+                var src = Path.Combine(oldRoot, name);
+                var dst = Path.Combine(ConfigDirectory, name);
+                if (File.Exists(src) && !File.Exists(dst))
+                    File.Move(src, dst);
+            }
         }
         catch
         {
@@ -185,7 +226,7 @@ public static class ConfigStore
         StaticBytes = HexStringToBytes(dto.StaticBytes),
     };
 
-    private static PidDto PidDtoFrom(Pid pid) => new()
+    public static PidDto PidDtoFrom(Pid pid) => new()
     {
         Address = pid.Address,
         Name = pid.Name,

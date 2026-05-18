@@ -41,11 +41,11 @@
 // ---------------- helpers ----------------
 
 // Per-process file log. Lazily opened on the first DebugLog() call into
-// %LOCALAPPDATA%\GmEcuSimulator\shim logs\shim_<bitness>_<ts>.log so
+// %LOCALAPPDATA%\GmEcuSimulator\logs\shim logs\shim_<bitness>_<ts>.log so
 // each host-process load lands as its own file. Sibling of the simulator's
-// bus_*.csv logs (which live under \logs\) - kept at the same depth rather
-// than nested under \logs\ because these come from a different process
-// entirely (the J2534 host, not the sim) and are tracked separately. The
+// logs\bus logs\bus_*.csv files under the shared logs\ parent - they come
+// from different processes (the J2534 host vs the sim) and are tracked
+// separately, but co-located so a full run produces one tidy logs tree. The
 // mutex protects the {FILE*, open-attempt-flag, path-buffer} trio against
 // the multi-threaded hosts (DPS, Tech 2 Win, etc.) that drive PassThru*
 // concurrently. The existing OutputDebugStringA path stays - the file log
@@ -71,7 +71,14 @@ static void OpenLogFileIfNeeded()
     if (n < 0 || n >= MAX_PATH) return;
     CreateDirectoryA(dir, NULL);
 
-    n = snprintf(dir, MAX_PATH, "%s\\GmEcuSimulator\\shim logs", appdata);
+    // Walk through the shared logs\ parent so all four log/capture
+    // folders sit together. CreateDirectoryA is idempotent (silently
+    // returns ERROR_ALREADY_EXISTS) so this is safe on every load.
+    n = snprintf(dir, MAX_PATH, "%s\\GmEcuSimulator\\logs", appdata);
+    if (n < 0 || n >= MAX_PATH) return;
+    CreateDirectoryA(dir, NULL);
+
+    n = snprintf(dir, MAX_PATH, "%s\\GmEcuSimulator\\logs\\shim logs", appdata);
     if (n < 0 || n >= MAX_PATH) return;
     CreateDirectoryA(dir, NULL);
 

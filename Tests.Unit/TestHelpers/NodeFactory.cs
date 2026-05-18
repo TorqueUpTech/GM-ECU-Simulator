@@ -22,8 +22,11 @@ internal static class NodeFactory
             SecurityModule = module,
         };
 
-    public static EcuNode CreateNodeWithGenericModule(FakeSeedKeyAlgorithm? algo = null)
-        => CreateNode(new Gmw3110_2010_Generic(algo ?? new FakeSeedKeyAlgorithm(), id: "fake"));
+    public static EcuNode CreateNodeWithGenericModule(
+        FakeSeedKeyAlgorithm? algo = null,
+        SecurityModuleBehaviour behaviour = SecurityModuleBehaviour.Strict)
+        => CreateNode(new Gmw3110_2010_Generic(
+            algo ?? new FakeSeedKeyAlgorithm(), id: "fake", behaviour: behaviour));
 
     public static ChannelSession CreateChannel()
         => new() { Id = 1, Protocol = ProtocolID.CAN, Baud = 500_000 };

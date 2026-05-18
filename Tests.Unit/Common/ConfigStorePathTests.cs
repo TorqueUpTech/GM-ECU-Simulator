@@ -20,10 +20,10 @@ public sealed class ConfigStorePathTests
         // Filename is per-mode and stable
         Assert.Equal(expectedFile, Path.GetFileName(path));
 
-        // Lives under %LOCALAPPDATA%\GmEcuSimulator
+        // Lives under %LOCALAPPDATA%\GmEcuSimulator\config
         var expectedDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "GmEcuSimulator");
+            "GmEcuSimulator", "config");
         Assert.Equal(expectedDir, Path.GetDirectoryName(path));
     }
 

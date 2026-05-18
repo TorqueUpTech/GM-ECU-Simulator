@@ -55,19 +55,19 @@ C:\Users\Nathan\AppData\Local\Programs\Python\Python313\python.exe `
 Prints every header field and instruction line. Use this to round-trip
 verify the output before handing it to DPS.
 
-## Wrap into a DPS archive (SPAT inside dps.exe)
+## Wrap into a DPS archive (SPAT)
 
-1. Open `C:\DPS\dps.exe`.
+1. Open the DPS host app.
 2. From the main window, click **SPAT** (Service Programming Archive Tool).
 3. Click **Create a New Archive**.
 4. Archive name: anything <= 32 chars, no extension (e.g. `gmsim_demo01`).
-5. Template: pick **`calfil00.DTM`** (utility-only - matches our zero-cal demo)
-   or **`calfil01.DTM`** (utility + 1 cal - use if you also want to drop in
-   a payload bin).
+5. Template: pick the utility-only template (matches our zero-cal demo) or
+   the utility+1-cal template (use if you also want to drop in a payload
+   bin).
 6. For the **Utility File** row: click **Select File** ->
    `tools\dps_utility_builder\dist\utility_demo.bin`.
-7. (If `calfil01.DTM`) for the cal row: select any small bin -
-   `dist\dummy_cal.bin` is provided.
+7. (If you picked the utility+1-cal template) for the cal row: select any
+   small bin - `dist\dummy_cal.bin` is provided.
 8. Optionally tick **Disable Auto File Conversion** in DPS options before
    building, so SPAT does not try to convert our already-binary input to
    another format.

@@ -1,5 +1,5 @@
 """
-Parse the PASSWORD TABLE DUMP block in sa015bcr_hook.txt, validate every
+Parse the PASSWORD TABLE DUMP block in the hook log, validate every
 entry, and emit a structured table (JSON + Markdown) for downstream use.
 
 For each algoId 0x00..0xFF we extract:

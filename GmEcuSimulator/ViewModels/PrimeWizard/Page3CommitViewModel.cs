@@ -12,8 +12,8 @@ public sealed class Page3CommitViewModel : NotifyPropertyChangedBase
 {
     // Default fixed seed used when the user picks a 5-byte bypass module
     // without supplying their own seed. Trailing 0x06 is the E92 family byte
-    // DPS's algo-92 cipher in sale.dll keys off; the first four bytes are
-    // just memorable filler.
+    // DPS's algo-92 cipher keys off; the first four bytes are just
+    // memorable filler.
     private const string DefaultBypass5ByteSeed = "11 22 33 44 06";
 
     private readonly PrimeWizardContext context;

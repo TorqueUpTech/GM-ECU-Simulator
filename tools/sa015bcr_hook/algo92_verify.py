@@ -1,17 +1,17 @@
 """
 Reference implementation of GM DPS 4.52 "Algo 92" (E92 family) seed-to-key.
 
-Extracted from C:\\DPS\\sa015bcr.dll (the per-algorithm key engine) and
-verified against DPS's own output by:
+Extracted from the vendor's per-algorithm key engine and verified against
+DPS's own output by:
 
-  1. Hooking sa015bcr.dll's `sa015bcr` export via a logging proxy.
+  1. Hooking the cipher DLL's key-derivation export via a logging proxy.
   2. Capturing the password blob DPS passes for algoId=0x92.
   3. Running this implementation end-to-end and matching the captured key.
 
-The password blob is sale.dll-decrypted-in-place at session start; it lives
-in IVCS5B.dll's .data section at offset 0x3398 + algoId*62 (62-byte ASCII
-entries). To get the blob for a different algorithm, re-run the hook with
-an archive that triggers that algoId.
+The password blob is decrypted in-place by the host at session start; it
+lives in a per-process module's .data section at offset 0x3398 + algoId*62
+(62-byte ASCII entries). To get the blob for a different algorithm, re-run
+the hook with an archive that triggers that algoId.
 
 Usage:
   python algo92_verify.py
@@ -20,7 +20,7 @@ Usage:
 import base64, hashlib
 from Crypto.Cipher import AES
 
-# === Captured from sa015bcr_hook.txt during 2018 Silverado E92 unlock ===
+# === Captured from the hook log during 2018 Silverado E92 unlock ===
 ALGO_92_PASSWORD = "01sgqbD6nsKDz8SawCanylLyqwtoFUeMsY2Y6FxEi4rP0A9QCSAP8Ivi0OzQk="
 
 

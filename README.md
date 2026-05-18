@@ -39,7 +39,7 @@ Ships with six modules registered out of the box, on a `gm-{ecmFamily}-{width}` 
 | Module ID | Seed/Key | Cipher | Behaviour |
 |---|---|---|---|
 | `gm-e38-2byte` | 2/2 | E38 ECM via non-DPS testers (HPT, EFILive, jakka351). `k = ~(bswap(s)+0x7D58)+0x8001`. Community-tagged "GMLAN 0x92" but the algorithm-number attribution is unsourced. | Strict |
-| `gm-e92-5byte` | 5/5 | E92-family ECMs via DPS. Reverse-engineered from `sale.dll` + `sa015bcr.dll` on 2026-05-17 via a logging proxy (`tools/sa015bcr_hook/`) and verified against 7 known seed/key pairs. The "92" is grounded in the actual `algoId` byte DPS utility files for this family carry. Defaults to the E92 password captured from DPS 4.52.2000; override with `password` / `algoId` / `familyByte` / `fixedSeed` in `SecurityModuleConfig`. | Strict |
+| `gm-e92-5byte` | 5/5 | E92-family ECMs via DPS. Reverse-engineered on 2026-05-17 via a logging proxy (`tools/sa015bcr_hook/`) and verified against 7 known seed/key pairs. The "92" is grounded in the actual `algoId` byte DPS utility files for this family carry. Defaults to the E92 password captured from a 2026-05 DPS 4.52 run; override with `password` / `algoId` / `familyByte` / `fixedSeed` in `SecurityModuleConfig`. | Strict |
 | `gm-e67-2byte` | 2/2 | E67 ECM. Extracted from PowerPCM_Flasher's `KeyAlgoGm_$89` (RVA 0x6670); brute-force-distinct from `gm-e38-2byte` over all 65536 seeds despite both being community-tagged "GMLAN". | Strict |
 | `gm-t43-2byte` | 2/2 | T43 TCM (6T70 family) `gett43key`, ported from 6Speed.T43 FOSS source. GM algorithm number not yet documented. | Strict |
 | `gm-bypass-2byte` | 2/2 | `RandomSeedCipher(2)`. Emits a non-zero random seed (or `fixedSeed` config) and accepts any key. | BypassAll |

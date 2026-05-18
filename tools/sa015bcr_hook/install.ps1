@@ -1,5 +1,5 @@
-# Install the logging proxy into C:\DPS.
-# Renames the original sa015bcr.dll to sa015bcr_real.dll (if not already done)
+# Install the logging proxy into the target directory.
+# Renames the original library to <name>_real.dll (if not already done)
 # and copies the built hook over the top.
 $ErrorActionPreference = 'Stop'
 
@@ -21,7 +21,7 @@ $logFile    = Join-Path $dps 'Logs\sa015bcr_hook.txt'
 if (-not (Test-Path $src))                        { throw "Hook DLL not built. Run build.ps1 first ($src)." }
 if (-not (Test-Path (Join-Path $dps $realName))) { throw "C:\DPS\sa015bcr.dll not found." }
 
-# Backup the genuine sa015bcr.dll only the first time.
+# Backup the genuine library only the first time.
 $backup = Join-Path $dps $backupName
 if (-not (Test-Path $backup)) {
     Copy-Item -Path (Join-Path $dps $realName) -Destination $backup

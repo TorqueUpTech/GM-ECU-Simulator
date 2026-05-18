@@ -1,6 +1,6 @@
-// Logging proxy for C:\DPS\sa015bcr.dll
-// Drop-in replacement that forwards every call to sa015bcr_real.dll
-// while logging args + buffer contents to C:\DPS\Logs\sa015bcr_hook.txt.
+// Logging proxy for the vendor cipher DLL.
+// Drop-in replacement that forwards every call to the renamed original
+// (<name>_real.dll) while logging args + buffer contents to a sibling log.
 
 #include <windows.h>
 #include <stdio.h>
@@ -76,12 +76,12 @@ static void log_buf(const char* label, const void* p, int max_bytes) {
     }
 }
 
-// Once sale.dll's license-check op has decrypted the password table in-place,
+// Once the host's license-check op has decrypted the password table in-place,
 // every per-algo entry is reachable as a contiguous 62-char ASCII record at
-// IVCS5B_base + 0x3398 + algoId * 62. We can back-compute IVCS5B_base from
+// table_base + 0x3398 + algoId * 62. We can back-compute table_base from
 // the password pointer we just received in a real call:
-//   password_va = IVCS5B_base + 0x3398 + algoId * 62
-//   IVCS5B_base = password_va - 0x3398 - algoId * 62
+//   password_va = table_base + 0x3398 + algoId * 62
+//   table_base  = password_va - 0x3398 - algoId * 62
 //
 // Then dump every algoId 0x00..0xFF. Run once per process.
 static void dump_password_table_once(const void* known_password_va, int known_algoId) {
@@ -137,9 +137,9 @@ extern "C" __declspec(dllexport) int __cdecl sa015bcr(void* seed, const void* pa
     log_buf("password",  password, 96);
     log_buf("out(in)",  out,      8);
 
-    // First real call: dump every per-algo password entry now that sale.dll
+    // First real call: dump every per-algo password entry now that the host
     // has decrypted the table. The password pointer we just received tells
-    // us where IVCS5B's base address is.
+    // us where the table base address is.
     dump_password_table_once(password, algoId);
 
     int rc;

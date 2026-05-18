@@ -54,8 +54,8 @@ public static class SecurityModuleRegistry
             () => new Gmw3110_2010_Generic(new E38Algorithm(),
                                            id: "gm-e38-2byte"));
 
-        // E92 ECM, 5-byte cipher: DPS "Algo 92". Reverse-engineered from
-        // sale.dll on 2026-05-17 (proxy at tools/sa015bcr_hook/); password
+        // E92 ECM, 5-byte cipher: DPS "Algo 92". Reverse-engineered on
+        // 2026-05-17 via a logging proxy (tools/sa015bcr_hook/); password
         // table in Gm5BytePasswords. The "92" here is grounded: it's the
         // algoId byte DPS utility files for this family carry.
         Register("gm-e92-5byte",

@@ -3,11 +3,11 @@
 Rebuild a DPS programming archive zip by swapping the utility-file bin
 inside an existing SPAT-built archive.
 
-SPAT (the GUI in dps.exe) wraps a utility file + .tbl manifest into a zip.
-The .tbl is a 5206-byte derivative of the calfil00.DTM template with the
-utility-file's filename baked in; it does NOT contain a checksum or size
-of the bin. So as long as we keep the filename stable we can swap the bin
-freely without re-running SPAT.
+SPAT (the vendor's archive GUI) wraps a utility file + .tbl manifest into
+a zip. The .tbl is a 5206-byte derivative of the utility-only template with
+the utility-file's filename baked in; it does NOT contain a checksum or
+size of the bin. So as long as we keep the filename stable we can swap the
+bin freely without re-running SPAT.
 
 Usage:
     rebuild_archive.py <base-archive.zip> <new-utility.bin> [-o out.zip]

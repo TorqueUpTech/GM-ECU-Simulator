@@ -34,11 +34,29 @@ if (-not $pr.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 # --- Resolve paths ---------------------------------------------------------
+#
+# Two supported layouts:
+#   1. Release bundle from a GitHub release - the zip is flat: the exe and
+#      both shim DLLs sit in the same folder as the Installer\ subdir.
+#   2. Source tree - shims under PassThruShim\{x64\,}Debug, exe under
+#      GmEcuSimulator\bin\Debug\net9.0-windows.
+# Probe (1) first; fall back to (2) for developer machines.
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$shim64 = Join-Path $repoRoot "PassThruShim\x64\Debug\PassThruShim64.dll"
-$shim32 = Join-Path $repoRoot "PassThruShim\Debug\PassThruShim32.dll"
-$exe    = Join-Path $repoRoot "GmEcuSimulator\bin\Debug\net9.0-windows\GmEcuSimulator.exe"
+
+$flatShim64 = Join-Path $repoRoot "PassThruShim64.dll"
+$flatShim32 = Join-Path $repoRoot "PassThruShim32.dll"
+$flatExe    = Join-Path $repoRoot "GmEcuSimulator.exe"
+
+if ((Test-Path $flatShim64) -and (Test-Path $flatShim32) -and (Test-Path $flatExe)) {
+    $shim64 = $flatShim64
+    $shim32 = $flatShim32
+    $exe    = $flatExe
+} else {
+    $shim64 = Join-Path $repoRoot "PassThruShim\x64\Debug\PassThruShim64.dll"
+    $shim32 = Join-Path $repoRoot "PassThruShim\Debug\PassThruShim32.dll"
+    $exe    = Join-Path $repoRoot "GmEcuSimulator\bin\Debug\net9.0-windows\GmEcuSimulator.exe"
+}
 
 # --- Optional build --------------------------------------------------------
 

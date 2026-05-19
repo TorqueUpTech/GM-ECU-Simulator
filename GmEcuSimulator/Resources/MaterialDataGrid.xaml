@@ -1,0 +1,68 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes">
+
+    <!--
+        Material Design 3 bundled theme + the per-control style sheets the
+        PID-setup DataGrid actually uses. Scoped to the window that merges
+        this dictionary so the chrome elsewhere in the app keeps its
+        GMThemeManager look. Mirrors the DataLogger's DataGridStyle.xaml
+        setup (Teal primary / DeepOrange secondary).
+    -->
+    <ResourceDictionary.MergedDictionaries>
+        <materialDesign:BundledTheme BaseTheme="Light"
+                                     PrimaryColor="Teal"
+                                     SecondaryColor="DeepOrange"/>
+        <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign3.Defaults.xaml"/>
+    </ResourceDictionary.MergedDictionaries>
+
+    <!--
+        Column-header style. Slightly heavier than MaterialDesignDataGridColumnHeader's
+        default so labels stand off the cell rows.
+    -->
+    <Style x:Key="PidGrid.ColumnHeader"
+           TargetType="DataGridColumnHeader"
+           BasedOn="{StaticResource MaterialDesignDataGridColumnHeader}">
+        <Setter Property="FontWeight" Value="Medium"/>
+        <Setter Property="FontSize"   Value="13"/>
+        <Setter Property="Padding"    Value="10,8,10,8"/>
+    </Style>
+
+    <!--
+        Cell style. Roomier padding than the default so the embedded
+        ComboBox / TextBox have breathing room and the dropdown chevron
+        stops overlapping text.
+    -->
+    <Style x:Key="PidGrid.Cell"
+           TargetType="DataGridCell"
+           BasedOn="{StaticResource MaterialDesignDataGridCell}">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Padding"  Value="8,6,8,6"/>
+    </Style>
+
+    <!--
+        ComboBox style used by the in-cell pickers (Mode column, Identifier
+        catalogue, Size, Type). MaterialDesignDataGridComboBox renders with a
+        proper underline + chevron and respects the cell's available width;
+        no more arrow-overlapping-text glitch.
+    -->
+    <Style x:Key="PidGrid.ComboBox"
+           TargetType="ComboBox"
+           BasedOn="{StaticResource MaterialDesignDataGridComboBox}">
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="MinHeight" Value="28"/>
+    </Style>
+
+    <!--
+        TextBox style for the $2D identifier (free-text hex address) and the
+        Name / Scalar / Offset / Unit cells. MaterialDesignDataGridTextBox
+        wraps the text in a proper input field shape consistent with the
+        ComboBoxes.
+    -->
+    <Style x:Key="PidGrid.TextBox"
+           TargetType="TextBox"
+           BasedOn="{StaticResource MaterialDesignDataGridTextBox}">
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+</ResourceDictionary>

@@ -36,6 +36,10 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.7" />
     <!-- Transitive dependency of the vendored Common.dll. -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <!-- Material Design theme - exploratory: SetupWindow's PID grid only. Same
+         version as the sibling DataLogger. If the look is adopted more broadly
+         the wiring moves up to App.xaml. -->
+    <PackageReference Include="MaterialDesignThemes" Version="5.3.0" />
   </ItemGroup>
 
   <PropertyGroup>

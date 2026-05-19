@@ -20,6 +20,13 @@
         Style="{StaticResource Window.AppShell}">
 
     <Window.Resources>
+        <ResourceDictionary>
+            <!-- Material Design styles for the PID grid only. Exploratory: testing the
+                 picker / cell visual against the existing GMThemeManager chrome. -->
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Resources/MaterialDataGrid.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
 
         <!-- Validation error template + implicit TextBox style. Duplicated
@@ -78,6 +85,7 @@
         <Style x:Key="Hint14" TargetType="TextBlock" BasedOn="{StaticResource Text.Hint}">
             <Setter Property="FontSize" Value="14"/>
         </Style>
+        </ResourceDictionary>
     </Window.Resources>
 
     <DockPanel LastChildFill="True">
@@ -247,7 +255,12 @@
                               AutoGenerateColumns="False"
                               CanUserAddRows="False"
                               CanUserDeleteRows="False"
-                              FontSize="14">
+                              FontSize="14"
+                              ColumnHeaderStyle="{StaticResource PidGrid.ColumnHeader}"
+                              CellStyle="{StaticResource PidGrid.Cell}"
+                              RowHeight="40"
+                              HeadersVisibility="Column"
+                              GridLinesVisibility="Horizontal">
                         <DataGrid.RowStyle>
                             <Style TargetType="{x:Type DataGridRow}" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                 <Style.Triggers>
@@ -272,7 +285,7 @@
                             <DataGridTemplateColumn Header="Mode" Width="86">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <ComboBox Style="{StaticResource ComboBox.Cell}"
+                                        <ComboBox Style="{StaticResource PidGrid.ComboBox}"
                                                   ItemsSource="{Binding Source={StaticResource PidModes}}"
                                                   SelectedItem="{Binding Mode, UpdateSourceTrigger=PropertyChanged}"/>
                                     </DataTemplate>
@@ -286,15 +299,14 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <Grid>
-                                            <ComboBox Style="{StaticResource ComboBox.Cell}"
+                                            <ComboBox Style="{StaticResource PidGrid.ComboBox}"
                                                       ItemsSource="{Binding IdentifierCatalogue}"
                                                       DisplayMemberPath="Display"
                                                       SelectedItem="{Binding SelectedCatalogueEntry, UpdateSourceTrigger=PropertyChanged}"
                                                       ToolTip="{Binding IdentifierLabel}"
                                                       Visibility="{Binding IsCatalogueDriven, Converter={StaticResource BoolToVis}}"/>
-                                            <TextBox Text="{Binding AddressHex, UpdateSourceTrigger=LostFocus}"
-                                                     VerticalContentAlignment="Center"
-                                                     Padding="4,0"
+                                            <TextBox Style="{StaticResource PidGrid.TextBox}"
+                                                     Text="{Binding AddressHex, UpdateSourceTrigger=LostFocus}"
                                                      Visibility="{Binding IsHandRolled, Converter={StaticResource BoolToVis}}"/>
                                         </Grid>
                                     </DataTemplate>
@@ -313,7 +325,7 @@
                             <DataGridTemplateColumn Header="Size" Width="84">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <ComboBox Style="{StaticResource ComboBox.Cell}"
+                                        <ComboBox Style="{StaticResource PidGrid.ComboBox}"
                                                   ItemsSource="{Binding Source={StaticResource PidSizes}}"
                                                   SelectedItem="{Binding Size, UpdateSourceTrigger=PropertyChanged}"
                                                   IsEnabled="{Binding IsHandRolled}"/>
@@ -323,7 +335,7 @@
                             <DataGridTemplateColumn Header="Type" Width="96">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <ComboBox Style="{StaticResource ComboBox.Cell}"
+                                        <ComboBox Style="{StaticResource PidGrid.ComboBox}"
                                                   ItemsSource="{Binding Source={StaticResource PidDataTypes}}"
                                                   SelectedItem="{Binding DataType, UpdateSourceTrigger=PropertyChanged}"
                                                   IsEnabled="{Binding IsHandRolled}"/>
@@ -332,7 +344,7 @@
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Scalar" Binding="{Binding Scalar, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78">
                                 <DataGridTextColumn.CellStyle>
-                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource PidGrid.Cell}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsCatalogueDriven}" Value="True">
                                                 <Setter Property="IsEnabled" Value="False"/>
@@ -344,7 +356,7 @@
                             </DataGridTextColumn>
                             <DataGridTextColumn Header="Offset" Binding="{Binding Offset, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78">
                                 <DataGridTextColumn.CellStyle>
-                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource PidGrid.Cell}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsCatalogueDriven}" Value="True">
                                                 <Setter Property="IsEnabled" Value="False"/>
@@ -356,7 +368,7 @@
                             </DataGridTextColumn>
                             <DataGridTextColumn Header="Unit"   Binding="{Binding Unit, UpdateSourceTrigger=LostFocus}"   Width="72">
                                 <DataGridTextColumn.CellStyle>
-                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource PidGrid.Cell}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsCatalogueDriven}" Value="True">
                                                 <Setter Property="IsEnabled" Value="False"/>

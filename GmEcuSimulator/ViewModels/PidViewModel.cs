@@ -98,7 +98,7 @@ public sealed class PidViewModel : NotifyPropertyChangedBase
     // every field is editable because the user is rolling a custom dynamic
     // PID from scratch (typically mirroring a memory-mapped value the real
     // ECU doesn't natively expose).
-    public bool IsCatalogueDriven => Model.Mode is PidMode.Mode1A or PidMode.Mode22;
+    public bool IsCatalogueDriven => Model.Mode is PidMode.Mode1A or PidMode.Mode22 or PidMode.Mode1;
     public bool IsHandRolled      => Model.Mode == PidMode.Mode2D;
 
     // The full picker list for the current mode. Bound to the Identifier

@@ -32,6 +32,7 @@ public sealed record PidCatalogueEntry(
     {
         PidMode.Mode1A => $"${Identifier:X2} - {Name}",
         PidMode.Mode22 => $"0x{Identifier:X4} - {Name}",
+        PidMode.Mode1  => $"${Identifier:X2} - {Name}",
         _              => Name,
     };
 }
@@ -78,12 +79,34 @@ public static class PidCatalogue
         new PidCatalogueEntry(PidMode.Mode22, 0x1940, "Fuel Rail Pressure",      PidSize.Word,  PidDataType.Unsigned, 0.1,           0.0, "kPa"),
     };
 
+    // OBD-II Service $01 (ShowCurrentData) PID catalogue. Stub of the most
+    // commonly-asked-for engine PIDs per SAE J1979. Scaling figures follow
+    // the public spec so values look plausible against a real scan tool.
+    // Real per-vehicle subsets vary; this stub gives the editor dropdown
+    // something to offer until the proper Mode $01 service handler lands.
+    public static readonly IReadOnlyList<PidCatalogueEntry> Mode1 = new[]
+    {
+        new PidCatalogueEntry(PidMode.Mode1, 0x04, "Calculated Engine Load",   PidSize.Byte, PidDataType.Unsigned, 100.0/255.0,   0.0, "%"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x05, "Engine Coolant Temp",      PidSize.Byte, PidDataType.Unsigned, 1.0,         -40.0, "deg C"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x0B, "Intake Manifold Pressure", PidSize.Byte, PidDataType.Unsigned, 1.0,           0.0, "kPa"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x0C, "Engine RPM",               PidSize.Word, PidDataType.Unsigned, 0.25,          0.0, "rpm"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x0D, "Vehicle Speed",            PidSize.Byte, PidDataType.Unsigned, 1.0,           0.0, "km/h"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x0F, "Intake Air Temperature",   PidSize.Byte, PidDataType.Unsigned, 1.0,         -40.0, "deg C"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x10, "MAF Air Flow Rate",        PidSize.Word, PidDataType.Unsigned, 0.01,          0.0, "g/s"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x11, "Throttle Position",        PidSize.Byte, PidDataType.Unsigned, 100.0/255.0,   0.0, "%"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x1F, "Run Time Since Engine Start", PidSize.Word, PidDataType.Unsigned, 1.0,        0.0, "s"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x2F, "Fuel Tank Level",          PidSize.Byte, PidDataType.Unsigned, 100.0/255.0,   0.0, "%"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x46, "Ambient Air Temperature",  PidSize.Byte, PidDataType.Unsigned, 1.0,         -40.0, "deg C"),
+        new PidCatalogueEntry(PidMode.Mode1, 0x5C, "Engine Oil Temperature",   PidSize.Byte, PidDataType.Unsigned, 1.0,         -40.0, "deg C"),
+    };
+
     /// <summary>Returns the catalogue list appropriate for <paramref name="mode"/>;
     /// empty for $2D (which is hand-rolled).</summary>
     public static IReadOnlyList<PidCatalogueEntry> For(PidMode mode) => mode switch
     {
         PidMode.Mode1A => Mode1A,
         PidMode.Mode22 => Mode22,
+        PidMode.Mode1  => Mode1,
         _              => Array.Empty<PidCatalogueEntry>(),
     };
 }

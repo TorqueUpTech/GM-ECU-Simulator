@@ -91,6 +91,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         AppMode.DpsRead,
         AppMode.FlashToolWrite,
         AppMode.FlashToolRead,
+        AppMode.Mode1,
     };
 
     public MainViewModel(VirtualBus bus, BinReplayCoordinator replay, NamedPipeServer pipeServer)
@@ -332,6 +333,10 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
                 else if (newMode == AppMode.EcuSimulator)
                 {
                     DefaultEcuConfig.ApplyIfEmpty(bus);
+                }
+                else if (newMode == AppMode.Mode1)
+                {
+                    DefaultMode1Config.ApplyIfEmpty(bus);
                 }
             }
         }
@@ -604,10 +609,18 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         System.Windows.Input.CommandManager.InvalidateRequerySuggested();
     }
 
-    /// <summary>Bin Replay tab is ECU-Simulator-only.</summary>
-    public bool ShowsBinReplayTab => currentMode == AppMode.EcuSimulator;
-    /// <summary>Glitch tab is ECU-Simulator-only.</summary>
-    public bool ShowsGlitchTab    => currentMode == AppMode.EcuSimulator;
+    /// <summary>
+    /// Convenience predicate: modes whose inspector behaves like the ECU
+    /// editor (PID grid visible, Configure PIDs button, no programming-only
+    /// fields). Currently ECU Simulator + Mode 1 (OBD-II Mode $01) - both
+    /// drive synthesised PID responses from waveforms.
+    /// </summary>
+    private bool IsPidEditorMode => currentMode is AppMode.EcuSimulator or AppMode.Mode1;
+
+    /// <summary>Bin Replay tab shows in PID-editor modes.</summary>
+    public bool ShowsBinReplayTab => IsPidEditorMode;
+    /// <summary>Glitch tab shows in PID-editor modes.</summary>
+    public bool ShowsGlitchTab    => IsPidEditorMode;
     /// <summary>Captures tab shows in DPS and Flash Tool modes.</summary>
     public bool ShowsCaptureTab
         => currentMode is AppMode.DpsWrite or AppMode.DpsRead
@@ -647,16 +660,19 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         => currentMode is AppMode.DpsWrite or AppMode.DpsRead;
 
     /// <summary>
-    /// Visibility gate for ECU-Simulator-mode-only inspector actions
-    /// (e.g. the per-ECU "Configure PIDs..." launcher in the Selected ECU
-    /// pane). In DPS / Flash Tool modes the Prime Wizard / archive owns the
-    /// PID list so the standalone editor isn't surfaced from the inspector.
+    /// Visibility gate for PID-editor-mode inspector actions (e.g. the per-
+    /// ECU "Configure PIDs..." launcher). True in modes where the user
+    /// defines/edits PIDs directly (ECU Simulator + Mode 1). In DPS / Flash
+    /// Tool modes the Prime Wizard / archive owns the PID list so the
+    /// standalone editor isn't surfaced from the inspector. Property name
+    /// retained for XAML-binding stability - it now reads "is this a
+    /// PID-editor mode" rather than literally "is ECU Simulator".
     /// </summary>
-    public bool IsEcuSimulatorMode => currentMode == AppMode.EcuSimulator;
+    public bool IsEcuSimulatorMode => IsPidEditorMode;
 
     /// <summary>
     /// Visibility gate for the live PID DataGrid in the Selected ECU pane.
-    /// Visible only in ECU Simulator mode. Hidden in:
+    /// Visible in ECU Simulator + Mode 1. Hidden in:
     /// - Flash Tool Write: flashing is a one-way data push, no PID responses.
     /// - DPS Write / DPS Read: the primed PID set is an internal implementation
     ///   detail of the prime pipeline (the solver synthesises bytecode-pinned
@@ -665,15 +681,15 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     /// - Flash Tool Read: same reasoning - PID list is not a user-facing
     ///   configuration surface in flash-readback flows.
     /// </summary>
-    public bool ShowsPidLiveGrid => currentMode == AppMode.EcuSimulator;
+    public bool ShowsPidLiveGrid => IsPidEditorMode;
 
     /// <summary>
     /// Visibility gate for programming-session-only inspector fields
-    /// (FC.BS, Diag addr). Hidden in ECU Simulator mode where the user is
+    /// (FC.BS, Diag addr). Hidden in PID-editor modes where the user is
     /// driving PID/waveform behaviour rather than tuning the ISO-TP / SPS
     /// addressing the host uses during a programming flow.
     /// </summary>
-    public bool ShowsProgrammingFields => currentMode != AppMode.EcuSimulator;
+    public bool ShowsProgrammingFields => !IsPidEditorMode;
 
     /// <summary>
     /// Visibility gate for the titlebar Security pill. Shown when an ECU is
@@ -700,9 +716,9 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     /// </summary>
     public double FormRowMaxHeight => currentMode switch
     {
-        AppMode.EcuSimulator                => 120.0,
-        AppMode.DpsWrite or AppMode.DpsRead => 220.0,
-        _                                   => double.PositiveInfinity,
+        AppMode.EcuSimulator or AppMode.Mode1 => 120.0,
+        AppMode.DpsWrite     or AppMode.DpsRead => 220.0,
+        _                                       => double.PositiveInfinity,
     };
 
     /// <summary>

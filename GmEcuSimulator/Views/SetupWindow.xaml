@@ -158,13 +158,19 @@
         -->
         <Grid Margin="14">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="240" MinWidth="240"/>
+                <!-- ECU sidebar | splitter | PIDs main | Waveform inspector.
+                     ECU sidebar default width reduced ~30 % from 240 -> 170;
+                     MinWidth dropped to 100 so the user can shrink it further
+                     via the inserted vertical GridSplitter when they want
+                     more horizontal room for the PID grid. -->
+                <ColumnDefinition Width="170" MinWidth="100"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"   MinWidth="320"/>
                 <ColumnDefinition Width="260" MinWidth="260"/>
             </Grid.ColumnDefinitions>
 
             <!-- ECU sidebar (independent selection: SetupSelectedEcu) -->
-            <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,12,0">
+            <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,0,0">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -194,8 +200,31 @@
                 </Grid>
             </Border>
 
+            <!-- Vertical splitter between the ECU sidebar and the PIDs pane.
+                 6 px wide, transparent body with a single-pixel divider so it
+                 doesn't compete with the surrounding card chrome - matches the
+                 horizontal EditorSplitter pattern in MainWindow.xaml. -->
+            <GridSplitter Grid.Column="1" Width="6"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Stretch"
+                          Margin="6,0"
+                          Background="Transparent"
+                          ResizeBehavior="PreviousAndNext"
+                          ResizeDirection="Columns">
+                <GridSplitter.Template>
+                    <ControlTemplate TargetType="{x:Type GridSplitter}">
+                        <Border Background="Transparent">
+                            <Rectangle Width="1" Fill="{DynamicResource Border.SubtleBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Stretch"
+                                       SnapsToDevicePixels="True"/>
+                        </Border>
+                    </ControlTemplate>
+                </GridSplitter.Template>
+            </GridSplitter>
+
             <!-- PIDs main pane -->
-            <Border Grid.Column="1" Style="{StaticResource Card}" Margin="0,0,12,0">
+            <Border Grid.Column="2" Style="{StaticResource Card}" Margin="0,0,12,0">
                 <DockPanel DataContext="{Binding SetupSelectedEcu}" LastChildFill="True">
                     <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
@@ -396,7 +425,7 @@
             <!-- Waveform inspector. Bound to the setup-selected ECU's
                  selected PID's waveform so changing ECU here flips the
                  waveform fields too. -->
-            <Border Grid.Column="2" Style="{StaticResource Card}"
+            <Border Grid.Column="3" Style="{StaticResource Card}"
                     DataContext="{Binding SetupSelectedEcu.SelectedPid.Waveform}">
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Top"

@@ -24,6 +24,11 @@ namespace Core.Services;
 // Negative responses: $12 SFNS-IF on length error, $31 ROOR on invalid PID
 // id range, unsupported address, out-of-range size, or pidId collision with
 // a statically-configured PID.
+//
+// Real-silicon note (E38 12647991 / E67 12656942, static analysis 2026-05-19):
+// $2D is in the GMW3110-2010 PDF but on the surveyed bins it lives ONLY on the
+// UDS-stack dispatcher reached via OBD CAN IDs $7DF/$7E0/$101; the GMW3110
+// GMLAN-enhanced-diag dispatcher returns NRC $11 for $2D.
 public static class Service2DHandler
 {
     /// <summary>Returns true if a positive response was enqueued (caller should

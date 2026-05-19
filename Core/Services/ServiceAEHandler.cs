@@ -23,6 +23,11 @@ namespace Core.Services;
 //
 // Functional addressing: $AE is point-to-point in every spec example
 // (§8.21.5.1 uses physical $241). On functional we stay silent.
+//
+// Real-silicon note (E38 12647991 / E67 12656942, static analysis 2026-05-19):
+// $AE is in the GMW3110-2010 PDF but on the surveyed bins it lives ONLY on the
+// UDS-stack dispatcher reached via OBD CAN IDs $7DF/$7E0/$101; the GMW3110
+// GMLAN-enhanced-diag dispatcher returns NRC $11 for $AE.
 public static class ServiceAEHandler
 {
     public static bool Handle(EcuNode node, ReadOnlySpan<byte> usdtPayload, ChannelSession ch, bool isFunctional = false)

@@ -24,6 +24,12 @@ namespace Core.Services;
 // positive response for unsupported PIDs". And §8.6.4 NRC $31 fires only on
 // a *physical* request when **none** of the requested PIDs are supported;
 // a functional request with no supported PIDs gets no response at all.
+//
+// Real-silicon note (E38 12647991 / E67 12656942, static analysis 2026-05-19):
+// $22 is in the GMW3110-2010 PDF but on the surveyed bins it lives ONLY on the
+// UDS-stack dispatcher reached via OBD CAN IDs $7DF/$7E0/$101; the GMW3110
+// GMLAN-enhanced-diag dispatcher returns NRC $11 for $22. The PID-by-DID table
+// at E38 $145718 is the $22 data source (see Mode22DidBinExtractor).
 public static class Service22Handler
 {
     public static void Handle(EcuNode node, ReadOnlySpan<byte> usdtPayload, ChannelSession ch, double timeMs, bool isFunctional)

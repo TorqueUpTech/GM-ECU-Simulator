@@ -17,6 +17,11 @@ namespace Core.Services;
 // USDT positive response:
 //   byte[0]    = 0x6C
 //   byte[1]    = DPID id echo
+//
+// Real-silicon note (E38 12647991 / E67 12656942, static analysis 2026-05-19):
+// $2C is in the GMW3110-2010 PDF but on the surveyed bins it lives ONLY on the
+// UDS-stack dispatcher reached via OBD CAN IDs $7DF/$7E0/$101; the GMW3110
+// GMLAN-enhanced-diag dispatcher returns NRC $11 for $2C.
 public static class Service2CHandler
 {
     /// <summary>Returns true if a positive response was enqueued (caller should

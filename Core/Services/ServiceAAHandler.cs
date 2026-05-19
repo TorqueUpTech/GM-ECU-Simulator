@@ -22,7 +22,12 @@ namespace Core.Services;
 //   $04 = scheduleAtFastRate
 //
 // $AA positive responses are UUDT (DPID id + values, on the UUDT response
-// CAN ID) — handled by the DpidScheduler, not echoed here.
+// CAN ID) - handled by the DpidScheduler, not echoed here.
+//
+// Real-silicon note (E38 12647991 / E67 12656942, static analysis 2026-05-19):
+// $AA is in the GMW3110-2010 PDF but on the surveyed bins it lives ONLY on the
+// UDS-stack dispatcher reached via OBD CAN IDs $7DF/$7E0/$101; the GMW3110
+// GMLAN-enhanced-diag dispatcher returns NRC $11 for $AA.
 public static class ServiceAAHandler
 {
     /// <summary>Returns true if the request was a successful enhanced operation

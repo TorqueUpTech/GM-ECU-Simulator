@@ -68,8 +68,10 @@ public sealed class PidViewModel : NotifyPropertyChangedBase
             OnPropertyChanged(nameof(IsMode1A));
             OnPropertyChanged(nameof(IsMode22));
             OnPropertyChanged(nameof(IsMode2D));
-            OnPropertyChanged(nameof(SupportsWaveform));
-            OnPropertyChanged(nameof(SupportsScaling));
+            OnPropertyChanged(nameof(IsCatalogueDriven));
+            OnPropertyChanged(nameof(IsHandRolled));
+            OnPropertyChanged(nameof(IdentifierCatalogue));
+            OnPropertyChanged(nameof(SelectedCatalogueEntry));
             OnPropertyChanged(nameof(AddressHex));
             OnPropertyChanged(nameof(IdentifierLabel));
             parent.RaisePidsChanged();
@@ -83,25 +85,62 @@ public sealed class PidViewModel : NotifyPropertyChangedBase
     // Spec-defined name for the configured identifier, when known. Surfaced
     // as the Identifier cell tooltip so the user can hover a row to confirm
     // "$90 = VIN" without cross-referencing the spec. Returns null for
-    // unknown DIDs / PIDs (no tooltip shown). $22 catalogue lookup is a
-    // follow-up - the $22 wire-PID set is family-specific and currently
-    // only available via the (stubbed) Mode22DidBinExtractor.
+    // unknown DIDs / PIDs (no tooltip shown).
     public string? IdentifierLabel => Model.Mode switch
     {
-        PidMode.Mode1A => Common.Protocol.Gmw3110DidNames.NameOf((byte)(Model.Address & 0xFF)),
+        PidMode.Mode1A => Gmw3110DidNames.NameOf((byte)(Model.Address & 0xFF)),
         _              => null,
     };
 
-    // Mode1A rows always return StaticBytes - waveform fields would have no
-    // effect on the wire so the editor greys them out. Mode22/Mode2D both
-    // support waveform-driven responses (Mode2D inherits its waveform from
-    // the row's own settings, same shape as Mode22).
-    public bool SupportsWaveform => Model.Mode != PidMode.Mode1A;
+    // $1A and $22 rows pull their entire shape (identifier, size, type,
+    // scaling, unit) from a static catalogue - the user picks from a
+    // dropdown rather than typing values by hand. $2D rows are the inverse:
+    // every field is editable because the user is rolling a custom dynamic
+    // PID from scratch (typically mirroring a memory-mapped value the real
+    // ECU doesn't natively expose).
+    public bool IsCatalogueDriven => Model.Mode is PidMode.Mode1A or PidMode.Mode22;
+    public bool IsHandRolled      => Model.Mode == PidMode.Mode2D;
 
-    // Scalar / Offset / Unit are only meaningful when the response is a
-    // numeric waveform sample. Mode1A always-static and Mode2D-with-
-    // StaticBytes don't use them.
-    public bool SupportsScaling => Model.Mode == PidMode.Mode22;
+    // The full picker list for the current mode. Bound to the Identifier
+    // cell's ComboBox.ItemsSource on $1A/$22 rows; empty (and the cell
+    // collapses to a TextBox) for $2D.
+    public IReadOnlyList<PidCatalogueEntry> IdentifierCatalogue
+        => PidCatalogue.For(Model.Mode);
+
+    // Round-trips the current row through the catalogue: the getter finds
+    // the entry whose mode + identifier match the model (or null if the
+    // row's identifier isn't in the catalogue - e.g. a config from before
+    // the catalogue gained that PID). The setter stamps every shape field
+    // onto the model in one shot so the read-only cells reflect the new
+    // selection on the next tick.
+    public PidCatalogueEntry? SelectedCatalogueEntry
+    {
+        get => IdentifierCatalogue.FirstOrDefault(e => e.Identifier == Model.Address);
+        set
+        {
+            if (value is null) return;
+            // Apply identifier first so AddressHex / IdentifierLabel raise
+            // in the same property change burst as the rest.
+            Model.Address    = value.Identifier;
+            Model.Name       = value.Name;
+            Model.Size       = value.Size;
+            Model.DataType   = value.DataType;
+            Model.Scalar     = value.Scalar;
+            Model.Offset     = value.Offset;
+            Model.Unit       = value.Unit;
+            OnPropertyChanged(nameof(Address));
+            OnPropertyChanged(nameof(AddressHex));
+            OnPropertyChanged(nameof(IdentifierLabel));
+            OnPropertyChanged(nameof(Name));
+            OnPropertyChanged(nameof(Size));
+            OnPropertyChanged(nameof(DataType));
+            OnPropertyChanged(nameof(Scalar));
+            OnPropertyChanged(nameof(Offset));
+            OnPropertyChanged(nameof(Unit));
+            OnPropertyChanged(nameof(SelectedCatalogueEntry));
+            parent.RaisePidsChanged();
+        }
+    }
 
     // Identifier display: mode-aware hex formatting.
     //   Mode1A -> "$XX" for the DID byte (e.g. "$90")

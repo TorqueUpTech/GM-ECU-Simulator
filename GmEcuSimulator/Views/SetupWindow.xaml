@@ -278,20 +278,45 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Identifier" Binding="{Binding AddressHex, UpdateSourceTrigger=LostFocus}" Width="100">
-                                <DataGridTextColumn.CellStyle>
-                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
-                                        <Setter Property="ToolTip" Value="{Binding IdentifierLabel}"/>
-                                    </Style>
-                                </DataGridTextColumn.CellStyle>
-                            </DataGridTextColumn>
+                            <!-- Identifier cell. $1A/$22 rows show a ComboBox picker bound to
+                                 the row's mode-specific PidCatalogue list; $2D rows show a
+                                 free-text hex input for the 32-bit memory address. Both
+                                 controls share the cell - exactly one is visible at a time. -->
+                            <DataGridTemplateColumn Header="Identifier" Width="170">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <ComboBox Style="{StaticResource ComboBox.Cell}"
+                                                      ItemsSource="{Binding IdentifierCatalogue}"
+                                                      DisplayMemberPath="Display"
+                                                      SelectedItem="{Binding SelectedCatalogueEntry, UpdateSourceTrigger=PropertyChanged}"
+                                                      ToolTip="{Binding IdentifierLabel}"
+                                                      Visibility="{Binding IsCatalogueDriven, Converter={StaticResource BoolToVis}}"/>
+                                            <TextBox Text="{Binding AddressHex, UpdateSourceTrigger=LostFocus}"
+                                                     VerticalContentAlignment="Center"
+                                                     Padding="4,0"
+                                                     Visibility="{Binding IsHandRolled, Converter={StaticResource BoolToVis}}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- Name is editable in every mode - even catalogue-driven rows can
+                                 carry a user-supplied label (e.g. "VIN (donor)" to distinguish
+                                 multiple ECUs). The catalogue-picker setter stamps the default
+                                 name in but the user can rename freely afterwards. -->
                             <DataGridTextColumn Header="Name"    Binding="{Binding Name, UpdateSourceTrigger=LostFocus}"       Width="*" MinWidth="120"/>
+                            <!-- Size / Type / Scalar / Offset / Unit are read-only on $1A and $22
+                                 rows (their values come from the picked catalogue entry) and
+                                 fully editable on $2D rows (the user is rolling a custom PID
+                                 from scratch). The IsCatalogueDriven DataTrigger dims the cell
+                                 to make the read-only state visible. -->
                             <DataGridTemplateColumn Header="Size" Width="84">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <ComboBox Style="{StaticResource ComboBox.Cell}"
                                                   ItemsSource="{Binding Source={StaticResource PidSizes}}"
-                                                  SelectedItem="{Binding Size, UpdateSourceTrigger=PropertyChanged}"/>
+                                                  SelectedItem="{Binding Size, UpdateSourceTrigger=PropertyChanged}"
+                                                  IsEnabled="{Binding IsHandRolled}"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -301,19 +326,15 @@
                                         <ComboBox Style="{StaticResource ComboBox.Cell}"
                                                   ItemsSource="{Binding Source={StaticResource PidDataTypes}}"
                                                   SelectedItem="{Binding DataType, UpdateSourceTrigger=PropertyChanged}"
-                                                  IsEnabled="{Binding SupportsScaling}"/>
+                                                  IsEnabled="{Binding IsHandRolled}"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Scalar/Offset/Unit only make sense for waveform-encoded Mode22 rows.
-                                 Mode1A and Mode2D-with-static-bytes return raw payload bytes so
-                                 scaling has no effect; the cells stay visible (consistent layout)
-                                 but read-only and visually dimmed via SupportsScaling. -->
                             <DataGridTextColumn Header="Scalar" Binding="{Binding Scalar, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78">
                                 <DataGridTextColumn.CellStyle>
                                     <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SupportsScaling}" Value="False">
+                                            <DataTrigger Binding="{Binding IsCatalogueDriven}" Value="True">
                                                 <Setter Property="IsEnabled" Value="False"/>
                                                 <Setter Property="Opacity" Value="0.45"/>
                                             </DataTrigger>
@@ -325,7 +346,7 @@
                                 <DataGridTextColumn.CellStyle>
                                     <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SupportsScaling}" Value="False">
+                                            <DataTrigger Binding="{Binding IsCatalogueDriven}" Value="True">
                                                 <Setter Property="IsEnabled" Value="False"/>
                                                 <Setter Property="Opacity" Value="0.45"/>
                                             </DataTrigger>
@@ -337,7 +358,7 @@
                                 <DataGridTextColumn.CellStyle>
                                     <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SupportsScaling}" Value="False">
+                                            <DataTrigger Binding="{Binding IsCatalogueDriven}" Value="True">
                                                 <Setter Property="IsEnabled" Value="False"/>
                                                 <Setter Property="Opacity" Value="0.45"/>
                                             </DataTrigger>

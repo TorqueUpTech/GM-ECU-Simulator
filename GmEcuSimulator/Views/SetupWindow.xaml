@@ -316,7 +316,9 @@
                                  carry a user-supplied label (e.g. "VIN (donor)" to distinguish
                                  multiple ECUs). The catalogue-picker setter stamps the default
                                  name in but the user can rename freely afterwards. -->
-                            <DataGridTextColumn Header="Name"    Binding="{Binding Name, UpdateSourceTrigger=LostFocus}"       Width="*" MinWidth="120"/>
+                            <DataGridTextColumn Header="Name"    Binding="{Binding Name, UpdateSourceTrigger=LostFocus}"       Width="*" MinWidth="120"
+                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"
+                                                EditingElementStyle="{StaticResource PidGrid.TextColumn.EditingElement}"/>
                             <!-- Size / Type / Scalar / Offset / Unit are read-only on $1A and $22
                                  rows (their values come from the picked catalogue entry) and
                                  fully editable on $2D rows (the user is rolling a custom PID
@@ -342,7 +344,9 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Scalar" Binding="{Binding Scalar, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78">
+                            <DataGridTextColumn Header="Scalar" Binding="{Binding Scalar, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78"
+                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"
+                                                EditingElementStyle="{StaticResource PidGrid.TextColumn.EditingElement}">
                                 <DataGridTextColumn.CellStyle>
                                     <Style TargetType="DataGridCell" BasedOn="{StaticResource PidGrid.Cell}">
                                         <Style.Triggers>
@@ -354,7 +358,9 @@
                                     </Style>
                                 </DataGridTextColumn.CellStyle>
                             </DataGridTextColumn>
-                            <DataGridTextColumn Header="Offset" Binding="{Binding Offset, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78">
+                            <DataGridTextColumn Header="Offset" Binding="{Binding Offset, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78"
+                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"
+                                                EditingElementStyle="{StaticResource PidGrid.TextColumn.EditingElement}">
                                 <DataGridTextColumn.CellStyle>
                                     <Style TargetType="DataGridCell" BasedOn="{StaticResource PidGrid.Cell}">
                                         <Style.Triggers>
@@ -366,7 +372,9 @@
                                     </Style>
                                 </DataGridTextColumn.CellStyle>
                             </DataGridTextColumn>
-                            <DataGridTextColumn Header="Unit"   Binding="{Binding Unit, UpdateSourceTrigger=LostFocus}"   Width="72">
+                            <DataGridTextColumn Header="Unit"   Binding="{Binding Unit, UpdateSourceTrigger=LostFocus}"   Width="72"
+                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"
+                                                EditingElementStyle="{StaticResource PidGrid.TextColumn.EditingElement}">
                                 <DataGridTextColumn.CellStyle>
                                     <Style TargetType="DataGridCell" BasedOn="{StaticResource PidGrid.Cell}">
                                         <Style.Triggers>
@@ -378,7 +386,8 @@
                                     </Style>
                                 </DataGridTextColumn.CellStyle>
                             </DataGridTextColumn>
-                            <DataGridTextColumn Header="Live"   Binding="{Binding LiveValue}" IsReadOnly="True" Width="90"/>
+                            <DataGridTextColumn Header="Live"   Binding="{Binding LiveValue}" IsReadOnly="True" Width="90"
+                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </DockPanel>

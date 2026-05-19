@@ -77,4 +77,28 @@
         <Setter Property="MinHeight" Value="28"/>
     </Style>
 
+    <!--
+        DataGridTextColumn renders its read-only state inside a TextBlock
+        whose layout is owned by the column, not the cell - so the cell's
+        VerticalContentAlignment doesn't reach it. This ElementStyle pins
+        the TextBlock to vertical-centre so Name / Scalar / Offset / Unit /
+        Live sit on the same baseline as the in-cell ComboBoxes and the
+        $2D TextBox. Apply via DataGridTextColumn.ElementStyle.
+    -->
+    <Style x:Key="PidGrid.TextColumn.Element" TargetType="TextBlock">
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Margin" Value="4,0"/>
+    </Style>
+
+    <!--
+        Matching style for the column's editing state - when the user
+        double-clicks a cell to edit, WPF swaps the TextBlock for a TextBox
+        and applies this style.
+    -->
+    <Style x:Key="PidGrid.TextColumn.EditingElement" TargetType="TextBox">
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalAlignment"        Value="Center"/>
+        <Setter Property="Padding" Value="4,2"/>
+    </Style>
+
 </ResourceDictionary>

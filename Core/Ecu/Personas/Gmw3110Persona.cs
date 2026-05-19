@@ -28,16 +28,12 @@ public sealed class Gmw3110Persona : IDiagnosticPersona
                         bool isFunctional, byte sid, double nowMs, DpidScheduler scheduler,
                         DiagnosticStack stack)
     {
-        _ = stack;  // future per-stack SID gating; ignored today
-
         switch (sid)
         {
             case Service.Obd01ShowCurrentData:
-                // SAE J1979 OBD-II Mode $01. UDS-stack only on real silicon;
-                // the per-handler stack gate inside Service01Handler (added
-                // in a follow-up commit) emits NRC $11 when called on the
-                // GMW3110 stack. Until that lands, registering here lets the
-                // SID flow through; the gate then short-circuits.
+                // SAE J1979 OBD-II Mode $01. UDS-stack only on real E38/E67
+                // silicon - see memory/project_dual_diag_stack_e38_e67.md.
+                if (!RequireUdsStack(node, ch, isFunctional, sid, stack)) return true;
                 Service01Handler.Handle(node, usdt, ch, nowMs, isFunctional);
                 return true;
             case Service.ReadDataByIdentifier:
@@ -53,21 +49,25 @@ public sealed class Gmw3110Persona : IDiagnosticPersona
                 // and 89 in the spec): each ECU responds with the PIDs it
                 // supports; ECUs that don't support any of the requested PIDs
                 // stay silent. The handler enforces the silent-on-functional
-                // rule when no PIDs match.
+                // rule when no PIDs match. UDS-stack only on real silicon.
+                if (!RequireUdsStack(node, ch, isFunctional, sid, stack)) return true;
                 Service22Handler.Handle(node, usdt, ch, nowMs, isFunctional);
                 return true;
             case Service.DefinePidByAddress:
                 if (isFunctional) return true;
+                if (!RequireUdsStack(node, ch, isFunctional, sid, stack)) return true;
                 if (Service2DHandler.Handle(node, usdt, ch))
                     Persona.ActivateP3C(node, ch);
                 return true;
             case Service.DynamicallyDefineMessage:
                 if (isFunctional) return true;
+                if (!RequireUdsStack(node, ch, isFunctional, sid, stack)) return true;
                 if (Service2CHandler.Handle(node, usdt, ch))
                     Persona.ActivateP3C(node, ch);
                 return true;
             case Service.ReadDataByPacketIdentifier:
                 if (isFunctional) return true;
+                if (!RequireUdsStack(node, ch, isFunctional, sid, stack)) return true;
                 if (ServiceAAHandler.Handle(node, usdt, ch, scheduler))
                     Persona.ActivateP3C(node, ch);
                 return true;
@@ -84,7 +84,10 @@ public sealed class Gmw3110Persona : IDiagnosticPersona
                 // sending $50 on its USDT response ID. The §8.2.6.2 pseudo-code
                 // is addressing-agnostic. 6Speed.T43 kernelprep() relies on
                 // this and prints "101 10 02 command failed" when the
-                // functional reply doesn't arrive within 100 ms.
+                // functional reply doesn't arrive within 100 ms. UDS-stack only
+                // on real silicon - functional $101 already lands as Uds so
+                // this gate is mostly belt-and-braces against physical-on-GMW3110.
+                if (!RequireUdsStack(node, ch, isFunctional, sid, stack)) return true;
                 if (Service10Handler.Handle(node, usdt, ch))
                     Persona.ActivateP3C(node, ch);
                 return true;
@@ -129,6 +132,8 @@ public sealed class Gmw3110Persona : IDiagnosticPersona
             case Service.RequestDeviceControl:
                 // §8.21: $AE is point-to-point only (every spec example uses
                 // a physical request ID). Handler stays silent on functional.
+                // UDS-stack only on real silicon.
+                if (!RequireUdsStack(node, ch, isFunctional, sid, stack)) return true;
                 if (ServiceAEHandler.Handle(node, usdt, ch, isFunctional))
                     Persona.ActivateP3C(node, ch);
                 return true;
@@ -138,12 +143,28 @@ public sealed class Gmw3110Persona : IDiagnosticPersona
                 // doesn't gate on addressing; a functional broadcast write to
                 // 17-byte VIN doesn't make sense anyway (every ECU would write
                 // the same VIN to its own slot), so we silently drop functional.
+                // UDS-stack only on real silicon.
                 if (isFunctional) return true;
+                if (!RequireUdsStack(node, ch, isFunctional, sid, stack)) return true;
                 if (Service3BHandler.Handle(node, usdt, ch))
                     Persona.ActivateP3C(node, ch);
                 return true;
             default:
                 return false;
         }
+    }
+
+    // Stack gate for SIDs that real E38/E67 silicon answers only via the
+    // OBD-II / UDS dispatcher (the GMW3110 GMLAN-enhanced dispatcher NRCs
+    // them $11). Returns true if dispatch should proceed; otherwise emits
+    // the NRC (physical only - functional broadcasts stay silent on the
+    // wrong stack the same way they stay silent for unsupported SIDs).
+    private static bool RequireUdsStack(EcuNode node, ChannelSession ch, bool isFunctional,
+                                        byte sid, DiagnosticStack stack)
+    {
+        if (stack == DiagnosticStack.Uds) return true;
+        if (!isFunctional)
+            ServiceUtil.EnqueueNrc(node, ch, sid, Nrc.ServiceNotSupported);
+        return false;
     }
 }

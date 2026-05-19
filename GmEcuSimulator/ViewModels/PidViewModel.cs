@@ -61,7 +61,13 @@ public sealed class PidViewModel : NotifyPropertyChangedBase
         set
         {
             if (Model.Mode == value) return;
+            var oldMode = Model.Mode;
             Model.Mode = value;
+            // Crossing the Mode1 boundary moves the underlying Pid between
+            // EcuNode.Pids (the unified store) and EcuNode.Mode1Pids (the
+            // separate 1-byte-keyed dictionary). Other Mode transitions stay
+            // in the unified store - no relocation needed.
+            parent.OnPidModeChanged(Model, oldMode, value);
             OnPropertyChanged();
             // Mode flips swap which columns are live and reshape the
             // identifier display; the cells re-read these on the same tick.

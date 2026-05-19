@@ -29,7 +29,14 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     {
         Model = model;
         Glitch = new GlitchConfigViewModel(model.Glitch);
+        // Surface BOTH the unified Pids list and the separate Mode1Pids
+        // store under one VM collection so the editor grid renders all
+        // rows together regardless of which underlying dictionary they
+        // live in. The Mode setter on PidViewModel moves the underlying
+        // model between stores when the user flips into/out of Mode1.
         foreach (var pid in model.Pids) Pids.Add(new PidViewModel(pid, this));
+        foreach (var kv in model.Mode1Pids.OrderBy(p => p.Key))
+            Pids.Add(new PidViewModel(kv.Value, this));
         // Re-evaluate Mode2D alias collisions whenever rows are added,
         // removed, or replaced. Per-row mode/address edits flow through
         // PidViewModel -> RaisePidsChanged which also calls this; the two
@@ -452,9 +459,38 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     public void RemoveSelectedPid()
     {
         if (selectedPid == null) return;
-        Model.RemovePid(selectedPid.Model);
+        // Drop from whichever store the row lives in. Mode1 entries are
+        // keyed by 1-byte PID id in the separate Mode1Pids dictionary.
+        if (selectedPid.Model.Mode == PidMode.Mode1)
+            Model.RemoveMode1Pid((byte)(selectedPid.Model.Address & 0xFF));
+        else
+            Model.RemovePid(selectedPid.Model);
         Pids.Remove(selectedPid);
         SelectedPid = null;
+    }
+
+    /// <summary>
+    /// Called by PidViewModel.Mode when the user flips a row into or out of
+    /// Mode1. The underlying Pid object is the same; only its EcuNode-side
+    /// storage location changes. The Pids ObservableCollection isn't touched -
+    /// the same VM entry continues to render the same model.
+    /// </summary>
+    public void OnPidModeChanged(Pid pid, PidMode oldMode, PidMode newMode)
+    {
+        if (oldMode == newMode) return;
+        bool wasMode1 = oldMode == PidMode.Mode1;
+        bool isMode1  = newMode == PidMode.Mode1;
+        if (wasMode1 == isMode1) return;  // crossing the Mode1 boundary is the only thing that moves storage
+        if (wasMode1)
+        {
+            Model.RemoveMode1Pid((byte)(pid.Address & 0xFF));
+            Model.AddPid(pid);
+        }
+        else
+        {
+            Model.RemovePid(pid);
+            Model.SetMode1Pid(pid);
+        }
     }
 
     /// <summary>
@@ -466,13 +502,21 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     /// </summary>
     public void ReplacePids(IEnumerable<Pid> loaded)
     {
+        // Tear down both stores. Iterate the VM collection (the unified view)
+        // and remove each row from whichever underlying store owns it.
         foreach (var existing in Pids.Select(p => p.Model).ToList())
-            Model.RemovePid(existing);
+        {
+            if (existing.Mode == PidMode.Mode1)
+                Model.RemoveMode1Pid((byte)(existing.Address & 0xFF));
+            else
+                Model.RemovePid(existing);
+        }
         Pids.Clear();
         SelectedPid = null;
         foreach (var pid in loaded)
         {
-            Model.AddPid(pid);
+            if (pid.Mode == PidMode.Mode1) Model.SetMode1Pid(pid);
+            else                            Model.AddPid(pid);
             Pids.Add(new PidViewModel(pid, this));
         }
         RaisePidsChanged();

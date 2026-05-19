@@ -64,11 +64,11 @@ public static class ArchivePrimer
         using var archive = ArchiveExtractor.Extract(archiveZipPath);
 
         byte[] osCalBytes = Array.Empty<byte>();
-        BinIdentificationReader.ArchiveOsHeader? header = null;
+        Mode1ADidBinExtractor.ArchiveOsHeader? header = null;
         if (archive.OsCalFilePath is not null)
         {
             osCalBytes = File.ReadAllBytes(archive.OsCalFilePath);
-            header = BinIdentificationReader.ReadArchiveOsHeader(osCalBytes);
+            header = Mode1ADidBinExtractor.ReadArchiveOsHeader(osCalBytes);
         }
 
         return new ArchiveDescriptor(
@@ -90,11 +90,11 @@ public static class ArchivePrimer
 
         byte[] osCalBytes = Array.Empty<byte>();
         IReadOnlyList<E38PidRecord> pids = Array.Empty<E38PidRecord>();
-        BinIdentificationReader.ArchiveOsHeader? archiveHeader = null;
+        Mode1ADidBinExtractor.ArchiveOsHeader? archiveHeader = null;
         if (archive.OsCalFilePath is not null)
         {
             osCalBytes = File.ReadAllBytes(archive.OsCalFilePath);
-            archiveHeader = BinIdentificationReader.ReadArchiveOsHeader(osCalBytes);
+            archiveHeader = Mode1ADidBinExtractor.ReadArchiveOsHeader(osCalBytes);
 
             // E38PidExtractor's signature requires ~200 ordered records to
             // anchor. T43 / E67 / non-E38 bins typically don't carry the

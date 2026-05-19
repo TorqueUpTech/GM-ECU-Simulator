@@ -2,7 +2,6 @@ using Common.Protocol;
 using Core.Bus;
 using Core.Ecu;
 using Core.Services;
-using Core.Utilities;
 
 namespace Core.Scheduler;
 
@@ -11,42 +10,33 @@ namespace Core.Scheduler;
 // GMW3110 §6.2.4 the ECU must time out at >= P3Cnom (5000 ms) and
 // <= P3Cmax (5100 ms); we tick at 50 ms granularity which keeps the
 // timeout inside that 100 ms tolerance band.
-//
-// Uses a single AutoRestart TimerOnDelay riding the shared TimerScheduler
-// thread — no dedicated thread of its own.
 public sealed class TesterPresentTicker : IDisposable
 {
     private const int TickPeriodMs = 50;
 
     private readonly VirtualBus bus;
     private readonly DpidScheduler scheduler;
-    private readonly TimerOnDelay timer;
+    private readonly System.Threading.Timer timer;
     private long lastTickMs;
 
     public TesterPresentTicker(VirtualBus bus, DpidScheduler scheduler)
     {
         this.bus = bus;
         this.scheduler = scheduler;
-        timer = new TimerOnDelay
-        {
-            Preset = TickPeriodMs,
-            AutoRestart = true,
-            DebugInstanceName = "TesterPresentTicker",
-            DebugTimerName = "P3C tick",
-        };
-        timer.OnTimingDone += (_, e) => Tick(e.ElapsedMs);
+        timer = new System.Threading.Timer(_ => Tick(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
     public void Start()
     {
         lastTickMs = 0;
-        timer.Start();
+        timer.Change(TickPeriodMs, TickPeriodMs);
     }
 
-    private void Tick(long elapsedMs)
+    private void Tick()
     {
-        int delta = lastTickMs == 0 ? TickPeriodMs : (int)(elapsedMs - lastTickMs);
-        lastTickMs = elapsedMs;
+        long nowMs = Environment.TickCount64;
+        int delta = lastTickMs == 0 ? TickPeriodMs : (int)(nowMs - lastTickMs);
+        lastTickMs = nowMs;
 
         bool anyTimedOut = false;
         foreach (var node in bus.Nodes)
@@ -78,5 +68,5 @@ public sealed class TesterPresentTicker : IDisposable
         }
     }
 
-    public void Dispose() => timer.Stop();
+    public void Dispose() => timer.Dispose();
 }

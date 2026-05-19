@@ -27,7 +27,6 @@ scripts/docx_to_pdf.py
 .claude/
 scripts/
 tools/
-docs/
 dist/
 
 # Scratch / output

@@ -15,7 +15,7 @@ namespace Core.Dps;
 //               Auto-populate buttons promote Empty rows to Bin / Default
 //
 // Donor handling is removed: the Bin source is now populated by the
-// wizard's "Load from bin..." button (running BinIdentificationReader.Parse
+// wizard's "Load from bin..." button (running Mode1ADidBinExtractor.Parse
 // on a user-picked bin and folding the walker's DID output into the
 // matching rows), not by the prime itself. Phase3Extractor is therefore
 // donor-free and depends only on the archive's own bytecode.

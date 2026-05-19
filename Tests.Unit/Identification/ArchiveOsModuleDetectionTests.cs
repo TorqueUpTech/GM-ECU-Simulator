@@ -3,7 +3,7 @@ using Xunit;
 
 namespace EcuSimulator.Tests.Identification;
 
-// Coverage for the archive-OS-module helpers in BinIdentificationReader.
+// Coverage for the archive-OS-module helpers in Mode1ADidBinExtractor.
 // The dispatcher walker cannot anchor on an archive OS module (the
 // dispatcher lives in flash 0x000000..0x010000, the boot region, which
 // archive ZIPs do not ship). What IS extractable: the per-module header
@@ -38,7 +38,7 @@ public sealed class ArchiveOsModuleDetectionTests
     public void LooksLikeArchiveOsModule_AcceptsValidHeader()
     {
         var bin = BuildModuleHeader("12639835");
-        Assert.True(BinIdentificationReader.LooksLikeArchiveOsModule(bin));
+        Assert.True(Mode1ADidBinExtractor.LooksLikeArchiveOsModule(bin));
     }
 
     [Theory]
@@ -50,7 +50,7 @@ public sealed class ArchiveOsModuleDetectionTests
     {
         var bin = BuildModuleHeader("12639835");
         bin[corruptOffset] = corruptValue;
-        Assert.False(BinIdentificationReader.LooksLikeArchiveOsModule(bin));
+        Assert.False(Mode1ADidBinExtractor.LooksLikeArchiveOsModule(bin));
     }
 
     [Fact]
@@ -58,20 +58,20 @@ public sealed class ArchiveOsModuleDetectionTests
     {
         var bin = new byte[1024];
         Array.Fill(bin, (byte)0xFF);
-        Assert.False(BinIdentificationReader.LooksLikeArchiveOsModule(bin));
+        Assert.False(Mode1ADidBinExtractor.LooksLikeArchiveOsModule(bin));
     }
 
     [Fact]
     public void LooksLikeArchiveOsModule_RejectsShortBin()
     {
-        Assert.False(BinIdentificationReader.LooksLikeArchiveOsModule(new byte[10]));
+        Assert.False(Mode1ADidBinExtractor.LooksLikeArchiveOsModule(new byte[10]));
     }
 
     [Fact]
     public void ReadArchiveOsHeader_ExtractsPnAndAlpha()
     {
         var bin = BuildModuleHeader("12639835", 'A', 'B');
-        var header = BinIdentificationReader.ReadArchiveOsHeader(bin);
+        var header = Mode1ADidBinExtractor.ReadArchiveOsHeader(bin);
 
         Assert.NotNull(header);
         Assert.Equal("12639835", header!.OsPartNumber);
@@ -84,7 +84,7 @@ public sealed class ArchiveOsModuleDetectionTests
         var bin = BuildModuleHeader("12639835");
         bin[10] = 0x41;   // 'A'
         bin[11] = 0x00;   // null byte
-        var header = BinIdentificationReader.ReadArchiveOsHeader(bin);
+        var header = Mode1ADidBinExtractor.ReadArchiveOsHeader(bin);
 
         Assert.NotNull(header);
         Assert.Equal("41 00", header!.AlphaCode);
@@ -95,7 +95,7 @@ public sealed class ArchiveOsModuleDetectionTests
     {
         var bin = new byte[1024];
         Array.Fill(bin, (byte)0xFF);
-        Assert.Null(BinIdentificationReader.ReadArchiveOsHeader(bin));
+        Assert.Null(Mode1ADidBinExtractor.ReadArchiveOsHeader(bin));
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public sealed class ArchiveOsModuleDetectionTests
         Assert.NotNull(archive.OsCalFilePath);
         var bytes = File.ReadAllBytes(archive.OsCalFilePath!);
 
-        var header = BinIdentificationReader.ReadArchiveOsHeader(bytes);
+        var header = Mode1ADidBinExtractor.ReadArchiveOsHeader(bytes);
         Assert.NotNull(header);
         Assert.Equal("12639835", header!.OsPartNumber);
     }

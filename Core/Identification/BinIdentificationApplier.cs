@@ -5,7 +5,7 @@ using Core.Ecu;
 namespace Core.Identification;
 
 /// <summary>
-/// Applies a <see cref="BinIdentificationReader.BinIdentification"/> result to
+/// Applies a <see cref="Mode1ADidBinExtractor.BinIdentification"/> result to
 /// an <see cref="EcuNode"/>'s $1A identifier map. Lives in Core (not the WPF
 /// view-model) so it can be unit-tested without dragging in WPF or a file
 /// picker; <c>EcuViewModel.LoadInfoFromBin</c> calls it after asking the user
@@ -49,7 +49,7 @@ public static class BinIdentificationApplier
     /// </summary>
     public sealed record ApplyOutcome(IReadOnlyList<string> Applied, IReadOnlyList<string> Skipped);
 
-    public static ApplyOutcome Apply(EcuNode node, BinIdentificationReader.BinIdentification result, LoadMode mode)
+    public static ApplyOutcome Apply(EcuNode node, Mode1ADidBinExtractor.BinIdentification result, LoadMode mode)
     {
         var applied = new List<string>();
         var skipped = new List<string>();

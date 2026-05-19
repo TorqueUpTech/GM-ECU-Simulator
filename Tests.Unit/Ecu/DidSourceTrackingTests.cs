@@ -3,7 +3,7 @@ using Core.Ecu;
 using Core.Identification;
 using EcuSimulator.Tests.TestHelpers;
 using Xunit;
-using static Core.Identification.BinIdentificationReader;
+using static Core.Identification.Mode1ADidBinExtractor;
 
 namespace EcuSimulator.Tests.Ecu;
 

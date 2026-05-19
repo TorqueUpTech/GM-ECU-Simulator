@@ -4,7 +4,7 @@ using Xunit;
 
 namespace EcuSimulator.Tests.Identification;
 
-// Coverage for BinIdentificationReader.
+// Coverage for Mode1ADidBinExtractor.
 //
 // Synthetic tests build a tiny PowerPC stub that mimics the dispatcher
 // pattern seen across T43/E38/E67 (cmpwi/beq chain -> $1A trampoline ->
@@ -16,13 +16,13 @@ namespace EcuSimulator.Tests.Identification;
 // Integration tests against the user's real bins live in
 // RealBinExtractionTests below and are skipped when the files aren't
 // present, so CI on a clean checkout still passes.
-public sealed class BinIdentificationReaderTests
+public sealed class Mode1ADidBinExtractorTests
 {
     [Fact]
     public void Parse_TooSmallBin_ReturnsNull()
     {
         var tiny = new byte[0x100];
-        Assert.Null(BinIdentificationReader.Parse(tiny));
+        Assert.Null(Mode1ADidBinExtractor.Parse(tiny));
     }
 
     [Fact]
@@ -31,7 +31,7 @@ public sealed class BinIdentificationReaderTests
         // 1 MiB of 0xFF erased flash - no PPC code, no dispatcher.
         var blank = new byte[0x100000];
         Array.Fill(blank, (byte)0xFF);
-        Assert.Null(BinIdentificationReader.Parse(blank));
+        Assert.Null(Mode1ADidBinExtractor.Parse(blank));
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public sealed class BinIdentificationReaderTests
         BinaryPrimitives.WriteUInt32BigEndian(bin.AsSpan(dataAddr, 4), expectedValue);
 
         // Act
-        var result = BinIdentificationReader.Parse(bin);
+        var result = Mode1ADidBinExtractor.Parse(bin);
 
         // Assert: walker found everything we planted.
         Assert.NotNull(result);
@@ -115,7 +115,7 @@ public sealed class BinIdentificationReaderTests
 
         var c1 = result.FindDid(0xC1);
         Assert.NotNull(c1);
-        Assert.Equal(BinIdentificationReader.DidSourceKind.FlashUInt32BE, c1!.Kind);
+        Assert.Equal(Mode1ADidBinExtractor.DidSourceKind.FlashUInt32BE, c1!.Kind);
         Assert.Equal(dataAddr, c1.FlashAddress);
         Assert.Equal(expectedValue.ToString(), c1.DecodedValue);
         Assert.Equal(new byte[] { 0x01, 0x72, 0x40, 0xDB }, c1.WireBytes);
@@ -185,11 +185,11 @@ public sealed class BinIdentificationReaderTests
         WriteInstr(bin, fetcherFn + 40, 0x38210010);                              // addi r1, r1, 0x10
         WriteInstr(bin, fetcherFn + 44, 0x4E800020);                              // blr
 
-        var result = BinIdentificationReader.Parse(bin);
+        var result = Mode1ADidBinExtractor.Parse(bin);
         Assert.NotNull(result);
         var cb = result!.FindDid(0xCB);
         Assert.NotNull(cb);
-        Assert.Equal(BinIdentificationReader.DidSourceKind.RuntimeComputed, cb!.Kind);
+        Assert.Equal(Mode1ADidBinExtractor.DidSourceKind.RuntimeComputed, cb!.Kind);
         Assert.Null(cb.FlashAddress);
         Assert.Empty(cb.WireBytes);
         Assert.Contains($"0x{ramAddr:X6}", cb.DecodedValue);
@@ -243,7 +243,7 @@ public sealed class BinIdentificationReaderTests
         WriteInstr(bin, handlerCB, 0x4E800020);
         WriteInstr(bin, handlerC9, 0x4E800020);
 
-        var result = BinIdentificationReader.Parse(bin);
+        var result = Mode1ADidBinExtractor.Parse(bin);
         Assert.NotNull(result);
         Assert.NotNull(result!.FindDid(0xCA));
         Assert.NotNull(result.FindDid(0xC9));
@@ -283,14 +283,14 @@ public sealed class BinIdentificationReaderTests
         var vinDesc = System.Text.Encoding.ASCII.GetBytes("GL2069706G1FK5EP6GL206970");
         Array.Copy(vinDesc, 0, bin, 0xE0AC, vinDesc.Length);
 
-        var result = BinIdentificationReader.Parse(bin);
+        var result = Mode1ADidBinExtractor.Parse(bin);
         Assert.NotNull(result);
         Assert.Equal("6G1FK5EP6GL206970", result!.Vin);
 
         // $90 VIN should be promoted as SegmentDerived with the ASCII bytes.
         var d90 = result.FindDid(0x90);
         Assert.NotNull(d90);
-        Assert.Equal(BinIdentificationReader.DidSourceKind.SegmentDerived, d90!.Kind);
+        Assert.Equal(Mode1ADidBinExtractor.DidSourceKind.SegmentDerived, d90!.Kind);
         Assert.Equal("6G1FK5EP6GL206970", System.Text.Encoding.ASCII.GetString(d90.WireBytes));
 
         // $28 partial VIN should be the last 6 chars.
@@ -349,17 +349,17 @@ public sealed class BinIdentificationReaderTests
         bin[dataAddr + 4] = (byte)'A';
         bin[dataAddr + 5] = (byte)'B';
 
-        var result = BinIdentificationReader.Parse(bin);
+        var result = Mode1ADidBinExtractor.Parse(bin);
         Assert.NotNull(result);
         var c1 = result!.FindDid(0xC1);
         Assert.NotNull(c1);
-        Assert.Equal(BinIdentificationReader.DidSourceKind.FlashUInt32BE, c1!.Kind);
+        Assert.Equal(Mode1ADidBinExtractor.DidSourceKind.FlashUInt32BE, c1!.Kind);
 
         // Partner $D1 should be synthesised with kind=SegmentDerived and the
         // ASCII Alpha Code as wire bytes.
         var d1 = result.FindDid(0xD1);
         Assert.NotNull(d1);
-        Assert.Equal(BinIdentificationReader.DidSourceKind.SegmentDerived, d1!.Kind);
+        Assert.Equal(Mode1ADidBinExtractor.DidSourceKind.SegmentDerived, d1!.Kind);
         Assert.Equal(dataAddr + 4, d1.FlashAddress);
         Assert.Equal(new byte[] { (byte)'A', (byte)'B' }, d1.WireBytes);
         Assert.Equal("AB", d1.DecodedValue);
@@ -407,7 +407,7 @@ public sealed class BinIdentificationReaderTests
         bin[dataAddr + 4] = 0xFF;
         bin[dataAddr + 5] = 0xFF;
 
-        var result = BinIdentificationReader.Parse(bin);
+        var result = Mode1ADidBinExtractor.Parse(bin);
         Assert.NotNull(result);
         Assert.NotNull(result!.FindDid(0xC1));
         Assert.Null(result.FindDid(0xD1));
@@ -473,7 +473,7 @@ public sealed class BinIdentificationReaderTests
         var bin = BuildMinimumViableImage();
         PlantVinDescriptor(bin, 0xC0AC, "1GCRKSE36BZ158034");
 
-        var r = BinIdentificationReader.Parse(bin);
+        var r = Mode1ADidBinExtractor.Parse(bin);
 
         Assert.NotNull(r);
         Assert.Equal("E38", r!.Family);
@@ -487,7 +487,7 @@ public sealed class BinIdentificationReaderTests
         var bin = BuildMinimumViableImage();
         PlantVinDescriptor(bin, 0xE0AC, "1G1FK1RS2D0107722");
 
-        var r = BinIdentificationReader.Parse(bin);
+        var r = Mode1ADidBinExtractor.Parse(bin);
 
         Assert.NotNull(r);
         Assert.Equal("E38", r!.Family);
@@ -504,7 +504,7 @@ public sealed class BinIdentificationReaderTests
         PlantVinDescriptor(bin, 0xC0AC, "1G6DT57V690112233");
         PlantAscii(bin, 0x1000, "BOSCH ME9");
 
-        var r = BinIdentificationReader.Parse(bin);
+        var r = Mode1ADidBinExtractor.Parse(bin);
 
         Assert.NotNull(r);
         Assert.Equal("E67", r!.Family);
@@ -518,7 +518,7 @@ public sealed class BinIdentificationReaderTests
         PlantVinDescriptor(bin, 0xE0AC, "1G6DT57V490112233");
         PlantAscii(bin, 0x1000, "BOSCH ME9");
 
-        var r = BinIdentificationReader.Parse(bin);
+        var r = Mode1ADidBinExtractor.Parse(bin);
 
         Assert.NotNull(r);
         Assert.Equal("E67", r!.Family);
@@ -534,7 +534,7 @@ public sealed class BinIdentificationReaderTests
         PlantVinDescriptor(bin, 0xC0AC, "1G1FK1RS2D0107722");
         PlantAscii(bin, 0x1FFA0, "BOSCH TC19.12");
 
-        var r = BinIdentificationReader.Parse(bin);
+        var r = Mode1ADidBinExtractor.Parse(bin);
 
         Assert.NotNull(r);
         Assert.Equal("T43", r!.Family);
@@ -547,7 +547,7 @@ public sealed class BinIdentificationReaderTests
         // through to "Unknown" instead of mis-detecting on something else.
         var bin = BuildMinimumViableImage();
 
-        var r = BinIdentificationReader.Parse(bin);
+        var r = Mode1ADidBinExtractor.Parse(bin);
 
         Assert.NotNull(r);
         Assert.Equal("Unknown", r!.Family);
@@ -642,7 +642,7 @@ public sealed class RealBinExtractionTests
         if (!File.Exists(T43Stock)) return;
 
         var bin = File.ReadAllBytes(T43Stock);
-        var r = BinIdentificationReader.Parse(bin);
+        var r = Mode1ADidBinExtractor.Parse(bin);
         Assert.NotNull(r);
         Assert.Equal("T43", r!.Family);
         var c1 = r.FindDid(0xC1);
@@ -662,13 +662,13 @@ public sealed class RealBinExtractionTests
         // resolved RAM address in the decoded-value note.
         var cb = r.FindDid(0xCB);
         Assert.NotNull(cb);
-        Assert.Equal(BinIdentificationReader.DidSourceKind.RuntimeComputed, cb!.Kind);
+        Assert.Equal(Mode1ADidBinExtractor.DidSourceKind.RuntimeComputed, cb!.Kind);
         Assert.Null(cb.FlashAddress);
         Assert.Contains("0x302578", cb.DecodedValue);
 
         var cc = r.FindDid(0xCC);
         Assert.NotNull(cc);
-        Assert.Equal(BinIdentificationReader.DidSourceKind.RuntimeComputed, cc!.Kind);
+        Assert.Equal(Mode1ADidBinExtractor.DidSourceKind.RuntimeComputed, cc!.Kind);
         Assert.Null(cc.FlashAddress);
         Assert.Contains("0x302528", cc.DecodedValue);
 
@@ -690,7 +690,7 @@ public sealed class RealBinExtractionTests
         if (!File.Exists(E67Lsa)) return;
 
         var bin = File.ReadAllBytes(E67Lsa);
-        var r = BinIdentificationReader.Parse(bin);
+        var r = Mode1ADidBinExtractor.Parse(bin);
         Assert.NotNull(r);
         Assert.Equal("E67", r!.Family);
         var c1 = r.FindDid(0xC1);
@@ -705,12 +705,12 @@ public sealed class RealBinExtractionTests
         // not a per-family constant.
         var cb = r.FindDid(0xCB);
         Assert.NotNull(cb);
-        Assert.Equal(BinIdentificationReader.DidSourceKind.RuntimeComputed, cb!.Kind);
+        Assert.Equal(Mode1ADidBinExtractor.DidSourceKind.RuntimeComputed, cb!.Kind);
         Assert.Contains("0x3F7948", cb.DecodedValue);
 
         var cc = r.FindDid(0xCC);
         Assert.NotNull(cc);
-        Assert.Equal(BinIdentificationReader.DidSourceKind.RuntimeComputed, cc!.Kind);
+        Assert.Equal(Mode1ADidBinExtractor.DidSourceKind.RuntimeComputed, cc!.Kind);
         Assert.Contains("0x3F7940", cc.DecodedValue);
     }
 }

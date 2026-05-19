@@ -1,3 +1,69 @@
+GM ECU Simulator
+Copyright (C) 2026 Nathan Pryor
+Contact: ndpryor@hotmail.com
+
+================================================================================
+                        DUAL LICENSE NOTICE - READ FIRST
+================================================================================
+
+This software is offered under a DUAL LICENSING model. You may use it under
+EITHER (but not both at once):
+
+  OPTION 1 - GNU Affero General Public License, Version 3 (AGPL-3.0)
+  -------------------------------------------------------------------
+  Free of charge for personal, non-commercial use. This covers:
+
+    * Hobbyists and enthusiasts working on their own vehicles
+    * Students, researchers, and educational use
+    * Personal experimentation and learning
+    * Non-profit open-source projects (provided derivative works are
+      themselves released under AGPL-3.0, including network-accessible use)
+
+  The full AGPL-3.0 text follows below and governs this option in its
+  entirety. In particular, AGPL-3.0 requires that if you modify the software
+  and either distribute it OR make it available over a network, you must make
+  the corresponding source code available under the same license.
+
+  OPTION 2 - Commercial License
+  -----------------------------
+  A separate commercial license is REQUIRED for any commercial use. This
+  includes, without limitation:
+
+    * Use by, within, or on behalf of any for-profit business or entity
+    * Incorporation into a commercial product or service (whether sold,
+      licensed, leased, hosted, or otherwise distributed for value)
+    * Use to provide paid services (diagnostics, tuning, calibration,
+      repair, programming, consulting) to third parties
+    * Internal business use by commercial entities, including their
+      employees, contractors, or affiliates
+    * Distribution of derivative works under terms other than AGPL-3.0
+    * Any use where the AGPL-3.0 source-disclosure obligations are
+      undesirable or incompatible with your business model
+
+  Commercial licenses are available on reasonable terms. To inquire about
+  pricing or to request a license, contact:
+
+      Nathan Pryor <ndpryor@hotmail.com>
+
+  Please include a brief description of your intended use so a suitable
+  license can be quoted.
+
+================================================================================
+
+If you are an individual hobbyist, enthusiast, student, or researcher using
+this software for non-commercial purposes, you are warmly welcome to use it
+free of charge under the AGPL-3.0 terms below. No further action is needed.
+
+If you are unsure whether your use is commercial, please contact the author
+at the address above before proceeding.
+
+The text below is the full GNU Affero General Public License, Version 3, which
+governs Option 1 (non-commercial use). It does NOT apply to Option 2
+(commercial use), which is governed by a separate written agreement.
+
+================================================================================
+
+
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 

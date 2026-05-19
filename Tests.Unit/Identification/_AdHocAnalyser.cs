@@ -14,11 +14,12 @@ public sealed class _AdHocAnalyser
 
     private static readonly (string label, string path)[] Bins =
     {
-        ("Smokeshow 12647991",    @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\ECM\From Smokeshow\12647991.bin"),
-        ("Tre-cool 12639270",     @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\ECM\Tre-cool\GM E38-12639270-Auto.bin"),
-        ("E38 2013 Silv LC9",     @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\Bins\E38_2013 Chev Silverado_LC9 Flex Fuel.bin"),
-        ("E38 2010 12633238",     @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\Bins\E38_2010_12633238.bin"),
-        ("2006 Holden L76",       @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\ECM\Tre-cool\2006 Holden Commodore Sedan Manual L76 6.0 Litre (12609099).bin"),
+        ("E38 2010 12633238",    @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\Bins\GM Global A\E38_2010_12633238.bin"),
+        ("E38 2013 Silv LC9",    @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\Bins\GM Global A\E38_2013 Chev Silverado_LC9 Flex Fuel.bin"),
+        ("E38 12639270 Tre-cool",@"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\Bins\GM Global A\GM E38-12639270-Auto.bin"),
+        ("E67 2009 CTS-V",       @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\Bins\GM Global A\E67 2009 Cadillac CTSV E67 - 12632176.bin"),
+        ("E67 2016 HSV LSA",     @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\Ghidra IDA\ECM\12656942_Mine\2016 HSV R8 LSA 12656942.bin"),
+        ("T43 Bens Stock",       @"C:\Users\Nathan\OneDrive\Cars\VF2 HSV R8 LSA\GM Programming\PCMHacking\Bins\GM Global A\Bens_Stock Read_T43.bin"),
     };
 
     [Fact]
@@ -36,7 +37,7 @@ public sealed class _AdHocAnalyser
             var bytes = File.ReadAllBytes(path);
             output.WriteLine($"  size: {bytes.Length:N0} bytes (0x{bytes.Length:X})");
 
-            var r = BinIdentificationReader.Parse(bytes);
+            var r = Mode1ADidBinExtractor.Parse(bytes);
             if (r == null) { output.WriteLine("  Parse returned null - no dispatcher found."); continue; }
 
             output.WriteLine($"  family            : {r.Family}");

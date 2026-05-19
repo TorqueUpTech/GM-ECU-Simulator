@@ -15,9 +15,9 @@ Three things changed materially during implementation. Update the corresponding 
 
 ### 0a. The archive boot region is not shipped, and family detection from an archive was abandoned
 
-**Original assumption (§5, §11):** `BinIdentificationReader` could be invoked on the archive's OS module to recover family + identifier DIDs. **Actual:** archives contain only the OS region (flash `0x010000` and up). The PowerPC service dispatcher cluster lives at flash `~0x006900` (boot region) - not in the archive. So `Parse` returns null on archive OS modules. The walker remains useful only for full 2 MiB readbacks fed in via Load-Info-from-Bin.
+**Original assumption (§5, §11):** `Mode1ADidBinExtractor` could be invoked on the archive's OS module to recover family + identifier DIDs. **Actual:** archives contain only the OS region (flash `0x010000` and up). The PowerPC service dispatcher cluster lives at flash `~0x006900` (boot region) - not in the archive. So `Parse` returns null on archive OS modules. The walker remains useful only for full 2 MiB readbacks fed in via Load-Info-from-Bin.
 
-**What ships instead:** `BinIdentificationReader.ReadArchiveOsHeader` extracts the 8-digit ASCII OS part number + 2-char alpha code from the per-module header at file offset `0x0E`/`10`. The header is surfaced in the Prime Report for human inspection, but **no longer feeds family inference**. The earlier `FamilyFromOsPartNumber` table and archive-filename-prefix sniffing were removed per the donor-only stance (see `feedback_no_os_pn_database.md` in memory). `PrimeReport.Family` is hardcoded `null` in [ArchivePrimer.cs:130](ArchivePrimer.cs:130). Security-module selection is now driven by `PickSecurityModule` reading the utility-file's `$27 Action[1]` algoId; see §0e below.
+**What ships instead:** `Mode1ADidBinExtractor.ReadArchiveOsHeader` extracts the 8-digit ASCII OS part number + 2-char alpha code from the per-module header at file offset `0x0E`/`10`. The header is surfaced in the Prime Report for human inspection, but **no longer feeds family inference**. The earlier `FamilyFromOsPartNumber` table and archive-filename-prefix sniffing were removed per the donor-only stance (see `feedback_no_os_pn_database.md` in memory). `PrimeReport.Family` is hardcoded `null` in [ArchivePrimer.cs:130](ArchivePrimer.cs:130). Security-module selection is now driven by `PickSecurityModule` reading the utility-file's `$27 Action[1]` algoId; see §0e below.
 
 ### 0b. PidResponseSolver replaced "NRC-only tier 3"
 
@@ -76,7 +76,7 @@ flowchart TD
 
     subgraph Scan["3. Scan OS cal file"]
         PIDs[extract_e38_pids logic<br/>535 PID IDs + lengths]
-        BIR[BinIdentificationReader<br/>VIN + module manifest + alpha codes]
+        BIR[Mode1ADidBinExtractor<br/>VIN + module manifest + alpha codes]
         Strings[String scan for cleartext IDs]
     end
 
@@ -114,7 +114,7 @@ flowchart TD
 | 1 | Unzip to temp dir, parse `.tbl` manifest to find the Utility File entry vs the Description-of-Cal entries | `Core/Dps/ArchiveExtractor.cs` |
 | 2 | Parse the utility file: interpreter steps, routine literals, service/DID call-list | `Core/Dps/UtilityFileParser.cs` (port of `tools/dps_utility_builder/parse_utility_file.py`) |
 | 3a | Scan the OS cal file for the 535-entry PID table | `Core/Dps/E38PidExtractor.cs` (port of `extract_e38_pids.py`) |
-| 3b | Run `BinIdentificationReader` over the OS cal file for identifiers | `Core/Identification/BinIdentificationReader.cs` (exists) |
+| 3b | Run `Mode1ADidBinExtractor` over the OS cal file for identifiers | `Core/Identification/Mode1ADidBinExtractor.cs` (exists) |
 | 3c | Optional cleartext-string scan for version stamps and build IDs | `Core/Dps/StaticStringScanner.cs` |
 | 4 | Build the `PrimedDataset` aggregating everything | `Core/Dps/PrimedDataset.cs` |
 | 5 | Build an `EcuNode` from the dataset, register on the bus | `Core/Dps/ArchivePrimer.cs` (the public entry point) |
@@ -139,11 +139,11 @@ This decision is **provisional**. Sign-off is "ship NRC `$31`, watch the Prime R
 ## 6. VIN strategy
 
 Order:
-1. Call `BinIdentificationReader` on the OS cal file. It already probes both `0xC0AC` and `0xE0AC` per [Core/Identification/BinIdentificationReader.cs:656](../Identification/BinIdentificationReader.cs:656). If it finds a VIN descriptor, use it.
+1. Call `Mode1ADidBinExtractor` on the OS cal file. It already probes both `0xC0AC` and `0xE0AC` per [Core/Identification/Mode1ADidBinExtractor.cs:656](../Identification/Mode1ADidBinExtractor.cs:656). If it finds a VIN descriptor, use it.
 2. Otherwise fall back to the archive filename if it parses as a 17-char VIN (e.g. `E38_1GCRKSE36BZ158034.zip` -> `1GCRKSE36BZ158034`).
 3. Otherwise the prime fails with "could not derive VIN" and the user is asked to set one manually.
 
-VIN is tagged in the Prime Report with its source: `bin@0xC0AC`, `bin@0xE0AC`, or `archive-filename`. The Continental-vs-Bosch disambiguation already handled in `BinIdentificationReader` is unchanged.
+VIN is tagged in the Prime Report with its source: `bin@0xC0AC`, `bin@0xE0AC`, or `archive-filename`. The Continental-vs-Bosch disambiguation already handled in `Mode1ADidBinExtractor` is unchanged.
 
 VIN populates DID `$90` (`Service1A`) and is what DPS's VIT2 record `0x41` compares against in Phase 3 `$53` ops.
 

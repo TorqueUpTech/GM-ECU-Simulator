@@ -150,7 +150,7 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
 
     /// <summary>
     /// "Load Info From Bin" command. Pops a file picker, parses the selected
-    /// .bin via <see cref="BinIdentificationReader"/>, and pushes the extracted
+    /// .bin via <see cref="Mode1ADidBinExtractor"/>, and pushes the extracted
     /// identity fields into <see cref="EcuNode.Identifiers"/>. ORPHAN: the Bin
     /// menu that used to bind this was retired - kept alive (along with
     /// <see cref="AutoPopulateDidsCommand"/>) because we'll wire it back up
@@ -211,7 +211,7 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
             return;
         }
 
-        var result = BinIdentificationReader.Parse(bytes);
+        var result = Mode1ADidBinExtractor.Parse(bytes);
         if (result == null)
         {
             MessageBox.Show(

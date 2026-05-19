@@ -51,7 +51,7 @@ public sealed class BusLogger : IDisposable
     public static string DefaultDirectory() => FileLogSink.DefaultDirectory();
     public static string DefaultPath() => FileLogSink.DefaultPath();
 
-    public void Start(string path) => sink.Start(path);
+    public void Start(string path, IEnumerable<string>? extraHeaderLines = null) => sink.Start(path, extraHeaderLines);
     public void Stop() => sink.Stop();
     public void Dispose() => sink.Dispose();
 

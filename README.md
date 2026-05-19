@@ -113,6 +113,36 @@ Load a `.bin` data-logger capture file (or the built-in 4-channel synthetic demo
 
 A full user manual lives at [`docs/User Manual.pdf`](<docs/User Manual.pdf>) (source: [`docs/User Manual.docx`](<docs/User Manual.docx>)).
 
+## License
+
+This project is **dual-licensed**. Pick the option that matches your use:
+
+### Free for hobbyists and enthusiasts (AGPL-3.0)
+
+If you're an individual working on your own vehicles, a student, a researcher, or anyone else using this for **personal, non-commercial purposes**, you can use the simulator free of charge under the [GNU Affero General Public License v3.0](LICENSE). That's the whole community this was built for - have at it, modify it, share it, build on it. The only ask under AGPL is that if you publish or network-host a modified version, you publish the modified source too.
+
+Examples of use that's free under AGPL:
+
+* Tuning, diagnosing, or logging your own car or your friends' cars
+* Learning how J2534, GMLAN, or GMW3110 works
+* Academic research, coursework, or teaching
+* Hobby projects, blog write-ups, YouTube videos, conference talks
+* Non-profit open-source forks (kept under AGPL)
+
+### Commercial use requires a separate license
+
+A **paid commercial license** is required for any **business or for-profit** use. That includes (without limitation):
+
+* Use by or within a for-profit business or entity, including internal use by its employees, contractors, or affiliates
+* Bundling the simulator (or any derivative) into a commercial product or paid service
+* Using the simulator to provide paid diagnostics, tuning, calibration, repair, or programming services to customers
+* Hosting it as part of a SaaS or networked offering
+* Any use where AGPL-3.0's source-disclosure requirements are incompatible with how you want to ship
+
+Commercial licenses are offered on reasonable terms. To request a quote, please email **ndpryor@hotmail.com** with a short description of your intended use.
+
+If you're not sure which side of the line your use falls on, just ask - hobbyist by default, business if money's involved.
+
 ## Status / scope
 
 * v04.04 conformance only - by design.

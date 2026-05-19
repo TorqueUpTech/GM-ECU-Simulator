@@ -12,7 +12,7 @@ namespace GmEcuSimulator.ViewModels.PrimeWizard;
 //
 // Two helper buttons live above the grid:
 //
-//   Load from bin...    Picks a .bin file, runs BinIdentificationReader.Parse,
+//   Load from bin...    Picks a .bin file, runs Mode1ADidBinExtractor.Parse,
 //                       and for each $1A row in the manifest whose DID the
 //                       walker found, replaces the row with Source = Bin and
 //                       the walker's authentic byte sequence. Empty rows
@@ -165,7 +165,7 @@ public sealed class Page2Phase3ViewModel : NotifyPropertyChangedBase
         try { bytes = File.ReadAllBytes(dlg.FileName); }
         catch (Exception ex) { InfoMessage = $"Could not read bin: {ex.Message}"; return; }
 
-        var binId = BinIdentificationReader.Parse(bytes);
+        var binId = Mode1ADidBinExtractor.Parse(bytes);
         if (binId is null)
         {
             InfoMessage = "Walker could not anchor a service dispatcher in that bin; nothing loaded.";

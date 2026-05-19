@@ -5,7 +5,7 @@ namespace Core.Identification.Segments;
 
 // Walks a flash image against a FamilyDefinition and produces one
 // SegmentMatch per segment that resolves cleanly. Has no dependency on
-// the rest of BinIdentificationReader - this is the structural-marker
+// the rest of Mode1ADidBinExtractor - this is the structural-marker
 // reader, independent of the PowerPC dispatcher-trace logic. The two
 // approaches complement each other: dispatcher trace gives on-the-wire
 // fidelity, segment reader gives broad flash metadata coverage.

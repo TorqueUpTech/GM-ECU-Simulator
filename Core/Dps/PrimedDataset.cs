@@ -15,7 +15,7 @@ public sealed record PrimedDataset(
     UtilityFile UtilityFile,
     ExpectedValueTable ExpectedValues,
     ExpectedRequestLog ExpectedRequests,
-    BinIdentificationReader.BinIdentification? BinIdentification,
+    Mode1ADidBinExtractor.BinIdentification? BinIdentification,
     IReadOnlyList<E38PidRecord> KnownPids,
     PidResponseSolver.SolverResult SolverResult,
     byte[] OsCalBytes,                   // virtual-flash seed for future CRC handlers

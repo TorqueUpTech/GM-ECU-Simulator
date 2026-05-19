@@ -60,9 +60,13 @@ public sealed class FileLogSink : IDisposable
 
     /// <summary>
     /// Opens the given path for writing and starts the background writer.
-    /// Replaces any in-progress session (calls Stop() first).
+    /// Replaces any in-progress session (calls Stop() first). Optional
+    /// <paramref name="extraHeaderLines"/> are written verbatim after the
+    /// built-in three banner lines and before the blank line that separates
+    /// the header from the traffic - callers (e.g. BusLogger) use this to
+    /// stamp the active ECU configuration into every capture.
     /// </summary>
-    public void Start(string path)
+    public void Start(string path, IEnumerable<string>? extraHeaderLines = null)
     {
         Stop();
 
@@ -74,6 +78,11 @@ public sealed class FileLogSink : IDisposable
         sw.WriteLine($"# GmEcuSimulator bus log");
         sw.WriteLine($"# Started: {DateTime.Now:yyyy-MM-dd HH:mm:ss} (local)");
         sw.WriteLine($"# Path:    {path}");
+        if (extraHeaderLines is not null)
+        {
+            foreach (var line in extraHeaderLines)
+                sw.WriteLine(line);
+        }
         sw.WriteLine();
 
         stream = sw;

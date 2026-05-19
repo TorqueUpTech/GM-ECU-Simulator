@@ -13,7 +13,7 @@ namespace EcuSimulator.Tests.Identification;
 // resolution (CWvin+0), segment-relative resolution, text/UIntBE decoding,
 // and the multi-candidate fall-through (first matching CheckWord wins).
 //
-// The real-bin integration tests live in BinIdentificationReaderTests
+// The real-bin integration tests live in Mode1ADidBinExtractorTests
 // because they assert the wired-in behaviour through Parse().
 public sealed class SegmentReaderTests
 {

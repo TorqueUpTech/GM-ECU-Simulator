@@ -524,7 +524,7 @@ public partial class MainWindow : Window
             if (busLogger.IsRunning) return;
             try
             {
-                busLogger.Start(Core.Bus.BusLogger.DefaultPath());
+                busLogger.Start(Core.Bus.BusLogger.DefaultPath(), BusConfigBanner.For(App.Bus));
             }
             catch (Exception ex)
             {
@@ -556,7 +556,7 @@ public partial class MainWindow : Window
             if (busLogger.IsRunning) return;
             try
             {
-                busLogger.Start(Core.Bus.BusLogger.DefaultPath());
+                busLogger.Start(Core.Bus.BusLogger.DefaultPath(), BusConfigBanner.For(App.Bus));
             }
             catch (Exception ex)
             {

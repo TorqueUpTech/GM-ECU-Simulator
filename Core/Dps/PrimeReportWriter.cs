@@ -184,7 +184,7 @@ public static class PrimeReportWriter
 
     private static void WriteBinIdentificationSection(StringBuilder sb, PrimedDataset dataset)
     {
-        sb.AppendLine("--- BinIdentificationReader ---");
+        sb.AppendLine("--- Mode1ADidBinExtractor ---");
         var bi = dataset.BinIdentification;
         if (bi is null)
         {

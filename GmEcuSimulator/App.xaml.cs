@@ -15,6 +15,9 @@ namespace GmEcuSimulator;
 public partial class App : Application
 {
     public static IServiceProvider Services { get; private set; } = null!;
+
+    /// <summary>Convenience accessor for the singleton VirtualBus.</summary>
+    public static VirtualBus Bus => Services.GetRequiredService<VirtualBus>();
     private NamedPipeServer? pipeServer;
     private MainWindow? mainWindow;
 

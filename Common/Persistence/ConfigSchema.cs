@@ -105,7 +105,7 @@ public sealed class SimulatorConfig
 
     // Optional path to a full 2 MiB ECU flash readback (.bin) whose boot
     // block (0x000000-0x00FFFF) is spliced with the archive OS module to
-    // form a synthetic full binary for BinIdentificationReader. Null = no
+    // form a synthetic full binary for Mode1ADidBinExtractor. Null = no
     // donor (archive-only prime, walker returns null as before).
     public string? DonorBinPath { get; set; }
 }

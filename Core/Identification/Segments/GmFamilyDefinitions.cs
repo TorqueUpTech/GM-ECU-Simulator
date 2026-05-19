@@ -145,7 +145,7 @@ public static class GmFamilyDefinitions
     /// <summary>
     /// Find the FamilyDefinition for a label string. Returns null if the
     /// label isn't one of the families we have segment definitions for.
-    /// Used by the BinIdentificationReader after its own family-detection
+    /// Used by the Mode1ADidBinExtractor after its own family-detection
     /// pass to opt in to the segment reader where supported.
     /// </summary>
     public static FamilyDefinition? Lookup(string family) => family switch

@@ -6,10 +6,16 @@ using Core.Identification.Segments;
 namespace Core.Identification;
 
 // Parses a GM ECU flash image (T43 TCM, E38 PCM, E67 PCM) by tracing the
-// $1A ReadDataByIdentifier handler in PowerPC machine code. The structure
-// is the same across all three families - GM standardised the diagnostic
-// core - so a single walker discovers every supported DID and its source
-// flash address without family-specific hardcoding.
+// $1A ReadDataByIdentifier handler in PowerPC machine code. $1A is the
+// GMW3110-2010 spec's identifier-read service (1-byte DIDs); UDS's $22 is
+// the analogous 2-byte-PID service and is handled separately by
+// Mode22DidBinExtractor. The simulator spans both spec spaces: real GM
+// ECUs route GMW3110 and UDS SIDs through a single on-chip dispatcher,
+// so the project models the two side-by-side rather than treating them
+// as alternatives. The structure is the same across all three families
+// - GM standardised the diagnostic core - so one walker discovers every
+// supported DID and its source flash address without family-specific
+// hardcoding.
 //
 // Walk:
 //   1. Locate the service dispatcher: a cmpwi/beq chain comparing the SID
@@ -56,7 +62,7 @@ namespace Core.Identification;
 // Real ECUs don't return these via $1A on these families, but they're
 // present in flash for human inspection and are useful for populating the
 // simulator's identity panel as informational defaults.
-public static class BinIdentificationReader
+public static class Mode1ADidBinExtractor
 {
     // ---------------------------- public API ----------------------------
 
@@ -407,9 +413,13 @@ public static class BinIdentificationReader
 
     // -------------------------- dispatcher hunt --------------------------
 
-    // Classic GMW3110 service IDs we expect a real diagnostic dispatcher to
-    // compare against. Five or more present in a 256-byte window is a near-
-    // certain dispatcher signature.
+    // Service IDs a real GM diagnostic dispatcher compares against. The
+    // list deliberately mixes GMW3110-only SIDs ($1A, $20, $3B, $A0..$AE)
+    // with UDS-only SIDs ($22, $11, $23, $3D); the rest are shared
+    // between the two specs. GM bins route both spaces through one
+    // cmpwi/beq chain, so a single signature scan works regardless of
+    // which dialect the ECU's tester actually speaks. Five or more
+    // matches in a 256-byte window is a near-certain dispatcher signature.
     private static readonly byte[] KnownSids =
     {
         0x10, 0x11, 0x14, 0x1A, 0x20, 0x22, 0x23, 0x27, 0x28, 0x2C, 0x2D,

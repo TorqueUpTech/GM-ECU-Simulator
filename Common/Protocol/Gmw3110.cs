@@ -4,6 +4,10 @@ namespace Common.Protocol;
 // positive responses, $7F for negative responses with the original SID echoed.
 public static class Service
 {
+    // SAE J1979 OBD-II (lives on the UDS-stack dispatcher on real silicon -
+    // see memory/project_dual_diag_stack_e38_e67.md).
+    public const byte Obd01ShowCurrentData = 0x01;
+
     // Request SIDs
     public const byte ClearDiagnosticInfo = 0x04;
     public const byte InitiateDiagnosticOperation = 0x10;     // $10 - sets P3C ACTIVE

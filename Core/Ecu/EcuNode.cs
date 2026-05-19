@@ -71,6 +71,15 @@ public sealed class EcuNode
     private readonly List<Pid> pids = new();
     private readonly Lock pidsLock = new();
 
+    // OBD-II Service $01 (J1979) PIDs live in a separate dictionary keyed by
+    // the 1-byte PID id so $22 lookups can't accidentally answer a Mode 1
+    // request and vice versa. The two stores have disjoint identifier spaces
+    // on the wire (1-byte vs 2-byte) and disjoint dispatchers - real silicon
+    // routes them through different code paths and the simulator follows the
+    // split. Editor moves rows between stores when the user flips PidMode.
+    private readonly Dictionary<byte, Pid> mode1Pids = new();
+    private readonly Lock mode1PidsLock = new();
+
     // GMW3110 §8.3 ReadDataByIdentifier ($1A) data. Each DID maps to a raw
     // byte array; the service handler returns [$5A, did, ...bytes] verbatim
     // so the user can configure any spec-defined identifier (VIN $90,
@@ -177,6 +186,42 @@ public sealed class EcuNode
         if (removed) PidsChanged?.Invoke(this, EventArgs.Empty);
         return removed;
     }
+
+    // ----- OBD-II Mode $01 (separate storage) -----
+
+    /// <summary>Snapshot copy of the Mode 1 PID set - safe to enumerate cross-thread.
+    /// Keys are 1-byte PID identifiers (e.g. 0x0C = Engine RPM).</summary>
+    public IReadOnlyDictionary<byte, Pid> Mode1Pids
+    {
+        get { lock (mode1PidsLock) return new Dictionary<byte, Pid>(mode1Pids); }
+    }
+
+    public Pid? GetMode1Pid(byte pidId)
+    {
+        lock (mode1PidsLock) return mode1Pids.TryGetValue(pidId, out var p) ? p : null;
+    }
+
+    /// <summary>Insert or replace a Mode 1 PID. Key is <c>(byte)(pid.Address &amp; 0xFF)</c>;
+    /// the editor stores the PID id in the same Address field for visual
+    /// consistency with the other modes.</summary>
+    public void SetMode1Pid(Pid pid)
+    {
+        byte key = (byte)(pid.Address & 0xFF);
+        lock (mode1PidsLock) mode1Pids[key] = pid;
+        Mode1PidsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public bool RemoveMode1Pid(byte pidId)
+    {
+        bool removed;
+        lock (mode1PidsLock) removed = mode1Pids.Remove(pidId);
+        if (removed) Mode1PidsChanged?.Invoke(this, EventArgs.Empty);
+        return removed;
+    }
+
+    /// <summary>Raised after a Mode 1 PID is added, replaced, removed, or the
+    /// set is cleared.</summary>
+    public event EventHandler? Mode1PidsChanged;
 
     /// <summary>
     /// Notifies subscribers that the PID list has changed without adding/removing.

@@ -138,7 +138,12 @@ public static class ConfigStore
                 FlowControlBlockSize = node.FlowControlBlockSize,
                 ProgrammedState = node.ProgrammedState,
                 DiagnosticAddress = node.DiagnosticAddress,
-                Pids = node.Pids.Select(PidDtoFrom).ToList(),
+                // Combine both stores so Mode1 entries survive a round-trip.
+                // Order: regular Pids first (preserve existing diff), then
+                // Mode1 entries sorted by PID id for deterministic output.
+                Pids = node.Pids.Select(PidDtoFrom)
+                    .Concat(node.Mode1Pids.OrderBy(kv => kv.Key).Select(kv => PidDtoFrom(kv.Value)))
+                    .ToList(),
             });
         }
         if (replay?.FilePath != null)
@@ -208,7 +213,15 @@ public static class ConfigStore
         };
         node.SecurityModule = SecurityModuleRegistry.Create(dto.SecurityModuleId);
         node.SecurityModule?.LoadConfig(dto.SecurityModuleConfig);
-        foreach (var pidDto in dto.Pids) node.AddPid(PidFrom(pidDto));
+        foreach (var pidDto in dto.Pids)
+        {
+            var pid = PidFrom(pidDto);
+            // Mode1 entries live in a separate dictionary so $22 and Service01
+            // can't reach into each other's namespace. Everything else stays
+            // in the unified pids list reachable by Pid.WireLookupId.
+            if (pid.Mode == PidMode.Mode1) node.SetMode1Pid(pid);
+            else node.AddPid(pid);
+        }
         return node;
     }
 

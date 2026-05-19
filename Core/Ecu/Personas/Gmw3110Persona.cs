@@ -32,6 +32,14 @@ public sealed class Gmw3110Persona : IDiagnosticPersona
 
         switch (sid)
         {
+            case Service.Obd01ShowCurrentData:
+                // SAE J1979 OBD-II Mode $01. UDS-stack only on real silicon;
+                // the per-handler stack gate inside Service01Handler (added
+                // in a follow-up commit) emits NRC $11 when called on the
+                // GMW3110 stack. Until that lands, registering here lets the
+                // SID flow through; the gate then short-circuits.
+                Service01Handler.Handle(node, usdt, ch, nowMs, isFunctional);
+                return true;
             case Service.ReadDataByIdentifier:
                 // §8.3 + DPS PM p.241: $1A $B0 functional is the canonical
                 // "who's on the bus" probe; each ECU answers physically with

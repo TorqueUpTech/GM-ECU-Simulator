@@ -35,6 +35,7 @@ public static class DefaultMode1Config
                     // $04 Calculated engine load - 1 byte, 100/255 * A %
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x04, Name = "Calculated engine load",
                         Size = PidSize.Byte, DataType = PidDataType.Unsigned,
                         Scalar = 100.0 / 255.0, Offset = 0.0, Unit = "%",
@@ -44,6 +45,7 @@ public static class DefaultMode1Config
                     // $05 Engine coolant temperature - 1 byte, A - 40 deg C
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x05, Name = "Engine coolant temperature",
                         Size = PidSize.Byte, DataType = PidDataType.Unsigned,
                         Scalar = 1.0, Offset = -40.0, Unit = "°C",
@@ -53,6 +55,7 @@ public static class DefaultMode1Config
                     // $0B Intake manifold absolute pressure - 1 byte, A kPa
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x0B, Name = "Intake manifold pressure",
                         Size = PidSize.Byte, DataType = PidDataType.Unsigned,
                         Scalar = 1.0, Offset = 0.0, Unit = "kPa",
@@ -62,6 +65,7 @@ public static class DefaultMode1Config
                     // $0C Engine RPM - 2 bytes, (256*A + B) / 4
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x0C, Name = "Engine RPM",
                         Size = PidSize.Word, DataType = PidDataType.Unsigned,
                         Scalar = 0.25, Offset = 0.0, Unit = "rpm",
@@ -71,6 +75,7 @@ public static class DefaultMode1Config
                     // $0D Vehicle speed - 1 byte, A km/h
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x0D, Name = "Vehicle speed",
                         Size = PidSize.Byte, DataType = PidDataType.Unsigned,
                         Scalar = 1.0, Offset = 0.0, Unit = "km/h",
@@ -80,6 +85,7 @@ public static class DefaultMode1Config
                     // $0F Intake air temperature - 1 byte, A - 40 deg C
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x0F, Name = "Intake air temperature",
                         Size = PidSize.Byte, DataType = PidDataType.Unsigned,
                         Scalar = 1.0, Offset = -40.0, Unit = "°C",
@@ -89,6 +95,7 @@ public static class DefaultMode1Config
                     // $10 MAF air flow rate - 2 bytes, (256*A + B) / 100 g/s
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x10, Name = "MAF air flow rate",
                         Size = PidSize.Word, DataType = PidDataType.Unsigned,
                         Scalar = 0.01, Offset = 0.0, Unit = "g/s",
@@ -98,6 +105,7 @@ public static class DefaultMode1Config
                     // $11 Throttle position - 1 byte, 100/255 * A %
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x11, Name = "Throttle position",
                         Size = PidSize.Byte, DataType = PidDataType.Unsigned,
                         Scalar = 100.0 / 255.0, Offset = 0.0, Unit = "%",
@@ -107,6 +115,7 @@ public static class DefaultMode1Config
                     // $1F Run time since engine start - 2 bytes, 256*A + B seconds
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x1F, Name = "Run time since engine start",
                         Size = PidSize.Word, DataType = PidDataType.Unsigned,
                         Scalar = 1.0, Offset = 0.0, Unit = "s",
@@ -116,6 +125,7 @@ public static class DefaultMode1Config
                     // $2F Fuel tank level input - 1 byte, 100/255 * A %
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x2F, Name = "Fuel tank level",
                         Size = PidSize.Byte, DataType = PidDataType.Unsigned,
                         Scalar = 100.0 / 255.0, Offset = 0.0, Unit = "%",
@@ -125,6 +135,7 @@ public static class DefaultMode1Config
                     // $46 Ambient air temperature - 1 byte, A - 40 deg C
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x46, Name = "Ambient air temperature",
                         Size = PidSize.Byte, DataType = PidDataType.Unsigned,
                         Scalar = 1.0, Offset = -40.0, Unit = "°C",
@@ -134,6 +145,7 @@ public static class DefaultMode1Config
                     // $5C Engine oil temperature - 1 byte, A - 40 deg C
                     new PidDto
                     {
+                        Mode = PidMode.Mode1,
                         Address = 0x5C, Name = "Engine oil temperature",
                         Size = PidSize.Byte, DataType = PidDataType.Unsigned,
                         Scalar = 1.0, Offset = -40.0, Unit = "°C",

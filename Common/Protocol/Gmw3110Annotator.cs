@@ -43,7 +43,7 @@ public static class Gmw3110Annotator
         if (len < 1 || payload.Length < offset + 1 + len) return false;
         byte sid = payload[offset + 1];
         return sid == Service.TesterPresent
-            || sid == (byte)(Service.TesterPresent + 0x40);
+            || sid == Service.TesterPresent + 0x40;
     }
 
     /// <summary>

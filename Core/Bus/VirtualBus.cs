@@ -1,11 +1,12 @@
-using System.Diagnostics;
 using Common.PassThru;
 using Common.Protocol;
 using Core.Ecu;
 using Core.Replay;
 using Core.Scheduler;
-using Core.Services;using Core.Transport;
+using Core.Services;
+using Core.Transport;
 using Core.Utilities;
+using System.Diagnostics;
 
 namespace Core.Bus;
 
@@ -84,6 +85,14 @@ public sealed class VirtualBus
 
     /// <summary>Raised after Add/Remove/Replace mutates the ECU set.</summary>
     public event EventHandler? NodesChanged;
+
+    /// <summary>
+    /// Cross-channel raw-frame broadcast hook. Set by the Shim's
+    /// IpcSessionState at construct time so any Core code (personas,
+    /// schedulers) can push a UUDT frame at every open channel. Null
+    /// while no IPC session is alive - callers must null-check.
+    /// </summary>
+    public IFrameBroadcaster? Broadcaster { get; set; }
 
     /// <summary>
     /// Frame-level traffic sink. Set to non-null to receive one record per

@@ -27,7 +27,9 @@ public static class ValueCodec
             case PidDataType.Unsigned:
             case PidDataType.Hex:
             {
-                ulong max = sizeBytes switch { 1 => 0xFFu, 2 => 0xFFFFu, 4 => 0xFFFFFFFFu, _ => throw new ArgumentOutOfRangeException(nameof(sizeBytes)) };
+                // Any width: the value occupies the low 8 bytes (big-endian); wider fields zero-pad the high bytes,
+                // so a 17-byte VIN-style PID or a $2D alias encodes without a 1/2/4-only special case.
+                ulong max = sizeBytes >= 8 ? ulong.MaxValue : (1UL << (8 * sizeBytes)) - 1;
                 ulong v = raw <= 0 ? 0UL : raw >= max ? max : (ulong)Math.Round(raw);
                 WriteBigEndian(dest, sizeBytes, v);
                 break;
@@ -35,17 +37,11 @@ public static class ValueCodec
 
             case PidDataType.Signed:
             {
-                long min = sizeBytes switch { 1 => sbyte.MinValue, 2 => short.MinValue, 4 => int.MinValue, _ => throw new ArgumentOutOfRangeException(nameof(sizeBytes)) };
-                long max = sizeBytes switch { 1 => sbyte.MaxValue, 2 => short.MaxValue, 4 => int.MaxValue, _ => throw new ArgumentOutOfRangeException(nameof(sizeBytes)) };
+                long min = sizeBytes >= 8 ? long.MinValue : -(1L << (8 * sizeBytes - 1));
+                long max = sizeBytes >= 8 ? long.MaxValue : (1L << (8 * sizeBytes - 1)) - 1;
                 long v = raw <= min ? min : raw >= max ? max : (long)Math.Round(raw);
-                ulong unsigned = sizeBytes switch
-                {
-                    1 => (ulong)(byte)(sbyte)v,
-                    2 => (ulong)(ushort)(short)v,
-                    4 => (ulong)(uint)(int)v,
-                    _ => throw new ArgumentOutOfRangeException(nameof(sizeBytes)),
-                };
-                WriteBigEndian(dest, sizeBytes, unsigned);
+                // WriteBigEndian emits the low sizeBytes bytes of the two's-complement pattern - correct at any width.
+                WriteBigEndian(dest, sizeBytes, (ulong)v);
                 break;
             }
 
@@ -64,6 +60,11 @@ public static class ValueCodec
     private static void WriteBigEndian(Span<byte> dest, int sizeBytes, ulong v)
     {
         for (int i = 0; i < sizeBytes; i++)
-            dest[i] = (byte)((v >> (8 * (sizeBytes - 1 - i))) & 0xFF);
+        {
+            int shift = 8 * (sizeBytes - 1 - i);
+            // Bytes beyond the low 8 are always zero (a ulong only carries 8); guard the shift so C#'s mod-64 shift
+            // semantics don't wrap a high byte back onto the low byte when sizeBytes > 8.
+            dest[i] = shift >= 64 ? (byte)0 : (byte)((v >> shift) & 0xFF);
+        }
     }
 }

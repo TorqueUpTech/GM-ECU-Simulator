@@ -1,6 +1,6 @@
+using Common;
 using System.Globalization;
 using System.Windows.Data;
-using Common;
 
 namespace GmEcuSimulator.Converters;
 

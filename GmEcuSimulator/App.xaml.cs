@@ -1,5 +1,3 @@
-using System.IO;
-using System.Windows;
 using Common;
 using Core.Bus;
 using Core.Dps;
@@ -9,6 +7,8 @@ using GMThemeManager;
 using Microsoft.Extensions.DependencyInjection;
 using Shim;
 using Shim.Ipc;
+using System.IO;
+using System.Windows;
 
 namespace GmEcuSimulator;
 
@@ -86,11 +86,6 @@ public partial class App : Application
         // main window so a third-party tester user can see why their host
         // got ERR_INVALID_PROTOCOL_ID back from PassThruConnect.
         bus.OnStatusMessage = s => GmEcuSimulator.MainWindow.SetStatus(s);
-
-        // Migrate any legacy %LocalAppData%\GmEcuSimulator\config.json to the
-        // per-mode ecu_simulator_config.json filename. Idempotent - no-op once
-        // migration has run or when the target already exists.
-        ConfigStore.MigrateLegacyConfigFile();
 
         // Pick up the persisted mode now (separate from MainViewModel's full
         // AppSettings load - we only need Mode here to choose the right config

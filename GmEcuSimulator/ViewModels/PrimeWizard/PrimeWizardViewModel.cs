@@ -1,9 +1,9 @@
-using System.Text.Json;
-using System.Windows;
 using Core.Bus;
 using Core.Dps;
 using Core.Ecu;
 using Core.Security;
+using System.Text.Json;
+using System.Windows;
 
 namespace GmEcuSimulator.ViewModels.PrimeWizard;
 

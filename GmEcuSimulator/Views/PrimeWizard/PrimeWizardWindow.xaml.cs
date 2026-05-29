@@ -1,8 +1,8 @@
-using System.Windows;
 using Core.Bus;
 using Core.Dps;
 using Core.Ecu;
 using GmEcuSimulator.ViewModels.PrimeWizard;
+using System.Windows;
 
 namespace GmEcuSimulator.Views.PrimeWizard;
 

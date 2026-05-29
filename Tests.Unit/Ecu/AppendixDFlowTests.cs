@@ -1,8 +1,8 @@
-using System.Text;
 using Common.Protocol;
 using Core.Ecu;
 using Core.Services;
 using EcuSimulator.Tests.TestHelpers;
+using System.Text;
 using Xunit;
 
 namespace EcuSimulator.Tests.Ecu;

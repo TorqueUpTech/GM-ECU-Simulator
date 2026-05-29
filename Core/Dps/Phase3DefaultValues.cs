@@ -43,7 +43,7 @@ public static class Phase3DefaultValues
                 return AsciiPad(vinFromArchive ?? PlaceholderVin(), length);
 
             case 0x99:   // ProgrammingDate (YYYYMMDD ASCII; some implementations expect BCD)
-                return AsciiPad(DateTime.UtcNow.ToString("yyyyMMdd"), length);
+                return AsciiPad(DateTime.Now.ToString("yyyyMMdd"), length);
 
             case 0x98:   // TesterSerial / programming tool ID
                 return AsciiPad("GMECUSIM01", length);

@@ -1,7 +1,6 @@
 using Common.Protocol;
 using Core.Bus;
 using Core.Ecu;
-using Core.Transport;
 
 namespace Core.Services;
 
@@ -70,11 +69,14 @@ namespace Core.Services;
 //                                 attributes.
 //
 // Persistence semantics: writes are runtime-only mutations on EcuNode. We do
-// NOT write back to any source .bin file or persist across simulator restarts
-// (per the memory note `feedback_bins_are_upstream_immutable`: source bins are
-// upstream-immutable; runtime state is the right place for live overrides).
-// File -> Save in the UI will round-trip the new values through ConfigSchema
-// because Identifiers is already a save-tracked property.
+// NOT write back to any source .bin file (per the memory note
+// `feedback_bins_are_upstream_immutable`: source bins are upstream-immutable;
+// runtime state is the right place for live overrides). Whether the write
+// survives a simulator restart depends on which store it lands in: a write
+// to a Mode1A PID row (the EcuIdentitySeeder / editor-grid path) round-trips
+// through File -> Save via PidDto/StaticBytes, while a write that falls back
+// to the identifier dictionary is runtime-only - v12 dropped per-ECU
+// Identifiers from ConfigSchema, so the dictionary is no longer save-tracked.
 //
 // Real-silicon note (E38 12647991 / E67 12656942, static analysis 2026-05-19):
 // $3B is in the GMW3110-2010 PDF but on the surveyed bins it lives ONLY on the
@@ -177,13 +179,25 @@ public static class Service3BHandler
             return false;
         }
 
-        // Write data values from dataRecord[] to the memory address associated
-        // with the DID. EcuNode.SetIdentifier mirrors the spec's "memory
-        // address associated with the dataIdentifier" abstraction - the
-        // $1A read handler returns whatever bytes we store here, so a
-        // subsequent $1A $90 round-trips the new VIN.
+        // Write the new value into whichever store $1A will actually read it
+        // back from. When the ECU carries a Mode1A PID row for this DID - the
+        // EcuIdentitySeeder / editor-grid path - update that row in place:
+        // Service1AHandler consults GetMode1APid FIRST, so writing to the
+        // identifier dictionary instead would be silently shadowed by the row,
+        // and the row is also the only one of the two stores that persists
+        // across save/load (v15 PidDto/StaticBytes). DIDs with no such row
+        // (archive-stubbed identifiers) fall back to the dictionary as before.
         var data = usdtPayload.Slice(2).ToArray();
-        node.SetIdentifier(did, data);
+        if (node.GetMode1APid(did) is { } pidRow)
+        {
+            pidRow.StaticBytes = data;
+            pidRow.LengthBytes = data.Length;
+            node.RaisePidsChanged();
+        }
+        else
+        {
+            node.SetIdentifier(did, data);
+        }
 
         node.State.Fragmenter.EnqueueResponse(ch, node.UsdtResponseCanId,
             [Service.Positive(Service.WriteDataByIdentifier), did]);

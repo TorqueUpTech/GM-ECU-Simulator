@@ -1,6 +1,5 @@
-using System.IO;
-using System.IO.Compression;
 using Core.Dps;
+using System.IO.Compression;
 using Xunit;
 
 namespace EcuSimulator.Tests.Dps;

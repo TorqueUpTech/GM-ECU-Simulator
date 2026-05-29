@@ -1,8 +1,7 @@
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Shapes;
+using GmEcuSimulator.ViewModels;
 
 namespace GmEcuSimulator.Views;
 
@@ -26,6 +25,19 @@ public partial class SetupWindow : Window
         => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
 
     private void OnCloseWindowClicked(object sender, RoutedEventArgs e) => Close();
+
+    // Right-clicking a PID column header opens that column's Excel-style
+    // sort/filter popup. The header's DataContext is the column's
+    // PidColumnFilter (bound via EcuProxy in SetupWindow.xaml); opening is just
+    // flipping its IsOpen, which the popup binds to.
+    private void OnColumnHeaderRightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: PidColumnFilter filter })
+        {
+            filter.IsOpen = true;
+            e.Handled = true;
+        }
+    }
 
     private void UpdateMaximizeIcon()
     {

@@ -1,5 +1,5 @@
-using System.Text;
 using Core.Ecu;
+using System.Text;
 
 namespace Core.Dps;
 
@@ -90,7 +90,9 @@ public static class PrimeReportWriter
 
     private static void WritePidsSection(StringBuilder sb, EcuNode node, PrimedDataset dataset)
     {
-        var pids = node.Pids;
+        // Materialise the AllPids snapshot once - the rest of this method
+        // counts and re-iterates it, and we want a stable view across both.
+        var pids = node.AllPids.ToList();
         sb.AppendLine($"--- $22 PIDs registered ({pids.Count} total, from PidResponseSolver) ---");
         if (pids.Count == 0)
         {

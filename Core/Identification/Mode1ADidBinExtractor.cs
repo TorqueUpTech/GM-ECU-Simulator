@@ -1,7 +1,7 @@
+using Core.Identification.Segments;
 using System.Buffers.Binary;
 using System.Text;
 using System.Text.RegularExpressions;
-using Core.Identification.Segments;
 
 namespace Core.Identification;
 
@@ -687,73 +687,13 @@ public static class Mode1ADidBinExtractor
 
     // ---------------------- family detection / metadata ----------------------
 
-    private static string DetectFamily(byte[] d)
-    {
-        // T43 has a distinctive "BOSCH TC19.12" marker near 0x1FFA0 (end of
-        // the Bosch project header). Strongest single signature we have.
-        if (FindAscii(d, "BOSCH TC19.12") >= 0) return "T43";
-        // E38 vs E67 distinguishable by VIN-descriptor block location: E38
-        // and the older E67 keep it at 0xE0AC; the 2016+ E67 moved it to
-        // 0xC0AC when the memory map shifted.
-        if (LooksLikeE67(d)) return "E67";
-        if (LooksLikeE38(d)) return "E38";
-        return "Unknown";
-    }
-
-    private static bool LooksLikeE67(byte[] d)
-    {
-        // E67 (Bosch ME9-based): VIN descriptor at either 0xC0AC (2010+) or
-        // 0xE0AC (some 2009-era bins). Require a Bosch ASCII marker to
-        // confirm - the previous "VIN@0xC0AC unconditionally = E67" rule
-        // mis-detected Continental-supplied E38 bins (e.g. 2011 Silverado
-        // 6.0L LY6) that also live at 0xC0AC but aren't Bosch ME9.
-        bool hasVin = HasAsciiVinDescriptor(d, 0xC0AC)
-                      || HasAsciiVinDescriptor(d, 0xE0AC);
-        if (!hasVin) return false;
-        if (FindAscii(d, "DELPHI") >= 0) return false;
-        return FindAscii(d, "BOSCH") >= 0;
-    }
-
-    private static bool LooksLikeE38(byte[] d)
-    {
-        // E38 (Delphi-supplied 2008-ish era, Continental on 2010+ trucks):
-        // VIN block lives at 0xE0AC on older Delphi bins and 0xC0AC on the
-        // 2010+ memory map. No supplier ASCII marker required - Continental-
-        // supplied 6.0L Silverado bins carry no `BOSCH`/`DELPHI` string at all,
-        // so the prior "BOSCH must be absent" check was redundant with E67's
-        // positive Bosch-marker requirement: if no Bosch marker is present
-        // AND a VIN descriptor lands at one of the two known offsets, this
-        // is E38.
-        return HasAsciiVinDescriptor(d, 0xC0AC)
-               || HasAsciiVinDescriptor(d, 0xE0AC);
-    }
-
-    private static bool HasAsciiVinDescriptor(byte[] d, int off)
-    {
-        // The descriptor block has the form `<8-char tail><17-char VIN>`. We
-        // only need to confirm 25 printable ASCII bytes here; full VIN
-        // validation happens in ExtractFlashMetadata.
-        if (off < 0 || off + 25 > d.Length) return false;
-        for (int i = 0; i < 25; i++)
-        {
-            byte b = d[off + i];
-            if (b < 0x20 || b > 0x7E) return false;
-        }
-        return true;
-    }
-
-    private static int FindAscii(byte[] d, string s)
-    {
-        var needle = Encoding.ASCII.GetBytes(s);
-        for (int i = 0; i + needle.Length <= d.Length; i++)
-        {
-            bool match = true;
-            for (int j = 0; j < needle.Length; j++)
-                if (d[i + j] != needle[j]) { match = false; break; }
-            if (match) return i;
-        }
-        return -1;
-    }
+    // Family detection lives in BinFamilyClassifier so the bin-add flow can
+    // call it without paying for the full dispatcher walk. This one-liner
+    // preserves the legacy string return so the rest of Parse and downstream
+    // consumers (GmFamilyDefinitions.Lookup, BinIdentification.Family) keep
+    // their existing contract.
+    private static string DetectFamily(byte[] d) =>
+        BinFamilyClassifier.Name(BinFamilyClassifier.Classify(d));
 
     // VIN charset excludes I, O, Q (per ISO 3779). Two flavours:
     //   - VinRx: plain 17-char VIN. Used as a last-resort fallback.

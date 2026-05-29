@@ -1,10 +1,7 @@
-using System.Globalization;
-using System.Text;
 using Common;
 using Common.Persistence;
-using Common.Protocol;
 using Common.Replay;
-using Common.Waveforms;
+using Common.Signals;
 using Core.Bus;
 using Core.Ecu;
 using Core.Replay;
@@ -25,75 +22,14 @@ public static class ConfigStore
     /// <summary>
     /// Per-mode auto-load / auto-save path under
     /// %LocalAppData%\GmEcuSimulator\config\. Each persistable mode owns its
-    /// own file so DPS, Flash-Tool, and ECU Simulator state stay separate
-    /// worlds. DPS modes get a path too, but the App lifecycle skips reading
-    /// / auto-writing it - the path exists only so manual File > Save has a
-    /// target.
+    /// own file so DPS and ECU Simulator state stay separate worlds. DPS modes
+    /// get a path too, but the App lifecycle skips reading / auto-writing it -
+    /// the path exists only so manual File > Save has a target.
     /// </summary>
     public static string PathForMode(AppMode mode)
     {
         Directory.CreateDirectory(ConfigDirectory);
         return Path.Combine(ConfigDirectory, mode.ConfigFileName());
-    }
-
-    /// <summary>
-    /// Idempotent startup migration. Covers two upgrades:
-    /// <list type="bullet">
-    /// <item>The original single-file <c>config.json</c> at the
-    /// <c>%LocalAppData%\GmEcuSimulator\</c> root, renamed to the per-mode
-    /// <c>ecu_simulator_config.json</c> when the multi-mode layout shipped.</item>
-    /// <item>The flat per-mode + <c>settings.json</c> + <c>layout.xml</c>
-    /// files at the same root, relocated into the new
-    /// <c>%LocalAppData%\GmEcuSimulator\config\</c> subfolder so all config
-    /// state sits together. Sibling of the <c>logs\</c> subfolder.</item>
-    /// </list>
-    /// Skips any move whose target already exists - that preserves whichever
-    /// the user has been writing to most recently and never overwrites.
-    /// </summary>
-    public static void MigrateLegacyConfigFile()
-    {
-        try
-        {
-            var oldRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "GmEcuSimulator");
-            Directory.CreateDirectory(ConfigDirectory);
-
-            // 1. Original single-file legacy rename, kept for installs that
-            //    still have config.json sitting around. Target is the new
-            //    per-mode filename inside config\.
-            var legacy = Path.Combine(oldRoot, "config.json");
-            var target = PathForMode(AppMode.EcuSimulator);
-            if (File.Exists(legacy) && !File.Exists(target))
-                File.Move(legacy, target);
-
-            // 2. Flat-root -> config\ relocation. Every config-shaped file
-            //    that used to live directly under GmEcuSimulator\ moves
-            //    into config\ keeping its filename. Safe to run on every
-            //    startup: the move is skipped when source is absent or
-            //    destination already exists.
-            string[] flatRootConfigs = {
-                "settings.json",
-                "layout.xml",
-                "ecu_simulator_config.json",
-                "dps_write_config.json",
-                "dps_read_config.json",
-                "flash_write_config.json",
-                "flash_read_config.json",
-            };
-            foreach (var name in flatRootConfigs)
-            {
-                var src = Path.Combine(oldRoot, name);
-                var dst = Path.Combine(ConfigDirectory, name);
-                if (File.Exists(src) && !File.Exists(dst))
-                    File.Move(src, dst);
-            }
-        }
-        catch
-        {
-            // Migration failures are non-fatal - the user falls back to
-            // defaults and re-saves. Logging would need an injected sink.
-        }
     }
 
     public static void Save(SimulatorConfig cfg, string path)
@@ -108,7 +44,7 @@ public static class ConfigStore
 
     /// <summary>
     /// Builds a SimulatorConfig snapshot of the current bus state - for
-    /// File > Save and File > Export. When <paramref name="replay"/> is
+    /// File > Save / Save As. When <paramref name="replay"/> is
     /// supplied and has a loaded bin (or a path the user wants auto-loaded),
     /// the BinReplay section is populated from it.
     /// </summary>
@@ -126,25 +62,7 @@ public static class ConfigStore
             // writing them to the config would persist stale static-byte dumps
             // that the next prime would overwrite anyway.
             if (node.IsPrimed) continue;
-            cfg.Ecus.Add(new EcuDto
-            {
-                Name = node.Name,
-                PhysicalRequestCanId = node.PhysicalRequestCanId,
-                UsdtResponseCanId = node.UsdtResponseCanId,
-                UudtResponseCanId = node.UudtResponseCanId,
-                Glitch = node.Glitch,
-                SecurityModuleId = node.SecurityModule?.Id,
-                SecurityModuleConfig = node.SecurityModuleConfig,
-                FlowControlBlockSize = node.FlowControlBlockSize,
-                ProgrammedState = node.ProgrammedState,
-                DiagnosticAddress = node.DiagnosticAddress,
-                // Combine both stores so Mode1 entries survive a round-trip.
-                // Order: regular Pids first (preserve existing diff), then
-                // Mode1 entries sorted by PID id for deterministic output.
-                Pids = node.Pids.Select(PidDtoFrom)
-                    .Concat(node.Mode1Pids.OrderBy(kv => kv.Key).Select(kv => PidDtoFrom(kv.Value)))
-                    .ToList(),
-            });
+            cfg.Ecus.Add(EcuDtoFrom(node));
         }
         if (replay?.FilePath != null)
         {
@@ -197,6 +115,58 @@ public static class ConfigStore
         }
     }
 
+    /// <summary>
+    /// Builds an <see cref="EcuDto"/> snapshot of a single <see cref="EcuNode"/>.
+    /// Used by the per-ECU Save command (sidebar dropdown) and by
+    /// <see cref="Snapshot"/> for the whole-config save path. Primed ECUs are
+    /// not skipped here - that's a policy decision the caller owns.
+    /// </summary>
+    public static EcuDto EcuDtoFrom(EcuNode node) => new()
+    {
+        Name = node.Name,
+        PhysicalRequestCanId = node.PhysicalRequestCanId,
+        UsdtResponseCanId = node.UsdtResponseCanId,
+        UudtResponseCanId = node.UudtResponseCanId,
+        Glitch = node.Glitch,
+        SecurityModuleId = node.SecurityModule?.Id,
+        SecurityModuleConfig = node.SecurityModuleConfig,
+        FlowControlBlockSize = node.FlowControlBlockSize,
+        ProgrammedState = node.ProgrammedState,
+        DiagnosticAddress = node.DiagnosticAddress,
+        // Persist only the off case explicitly; the default-true reload
+        // path in EcuNodeFrom would round-trip true silently anyway, so
+        // skipping it keeps saved configs minimal.
+        AutoRespondFromLibrary = node.AutoRespondFromLibrary ? null : false,
+        // Persist persona id only when it diverges from the default
+        // (gmw3110). Saves a noisy "PersonaId": "gmw3110" line on every
+        // ECU in the standard config and keeps diffs stable.
+        PersonaId = node.Persona.Id == "gmw3110" ? null : node.Persona.Id,
+        // FlashBinPath is per-persona (Ford-capture only) and EcuNode
+        // doesn't carry the path back (LoadFlashBin replaces the static
+        // bytes on the persona, not on the node). We DO persist the
+        // node's user-set FlashBinPath via the side-channel below so a
+        // round-trip through the editor doesn't drop the field. Without
+        // this, the auto-save path the WPF runs would strip the field
+        // and the next launch would fail Service $23 with NRC $22.
+        FlashBinPath = node.FlashBinPath,
+        // AllPids unions every mode-keyed store with deterministic ordering
+        // (Mode22 -> Mode2D -> Mode1A -> Mode1, each by key) so saved-config
+        // diffs stay stable across runs.
+        Pids = node.AllPids.Select(PidDtoFrom).ToList(),
+        // Persist the boot operating point only when it diverges from the default Idle (keeps standard configs quiet).
+        Scenario = node.EngineModel.ActiveScenario == ScenarioId.Idle ? null : node.EngineModel.ActiveScenario,
+        // Persist each AccelDecelSweep time only when the user has tuned it off the default (keeps standard configs quiet).
+        SweepAccelMs = node.EngineModel.Sweep.AccelTimeMs == SweepProfile.Default.AccelTimeMs ? null : node.EngineModel.Sweep.AccelTimeMs,
+        SweepLimiterHoldMs = node.EngineModel.Sweep.LimiterHoldMs == SweepProfile.Default.LimiterHoldMs ? null : node.EngineModel.Sweep.LimiterHoldMs,
+        SweepDecelMs = node.EngineModel.Sweep.DecelTimeMs == SweepProfile.Default.DecelTimeMs ? null : node.EngineModel.Sweep.DecelTimeMs,
+        SweepCrossfadeMs = node.EngineModel.Sweep.CrossfadeMs == SweepProfile.Default.CrossfadeMs ? null : node.EngineModel.Sweep.CrossfadeMs,
+        SweepLimiterCutRpm = node.EngineModel.Sweep.LimiterBounceRpm == SweepProfile.Default.LimiterBounceRpm ? null : node.EngineModel.Sweep.LimiterBounceRpm,
+        // Persist only the $01 PIDs the user has turned OFF relative to the
+        // built-in E38/E67 default subset (a delta, not the whole map). null
+        // when nothing is disabled keeps standard configs quiet.
+        Mode1Disabled = ComputeMode1Disabled(node),
+    };
+
     public static EcuNode EcuNodeFrom(EcuDto dto)
     {
         var node = new EcuNode
@@ -210,19 +180,67 @@ public static class ConfigStore
             FlowControlBlockSize = dto.FlowControlBlockSize,
             ProgrammedState = dto.ProgrammedState,
             DiagnosticAddress = dto.DiagnosticAddress,
+            // null in the JSON (missing field on a config saved before this
+            // landed) -> true: the always-on library fallback is the new
+            // default and old configs upgrade silently. Explicit false in
+            // the JSON stays false so a user who turns it off per-ECU keeps
+            // strict NRC behaviour across save/load.
+            AutoRespondFromLibrary = dto.AutoRespondFromLibrary ?? true,
         };
         node.SecurityModule = SecurityModuleRegistry.Create(dto.SecurityModuleId);
         node.SecurityModule?.LoadConfig(dto.SecurityModuleConfig);
+        // Persona resolution. Missing / unknown -> Gmw3110Persona (the
+        // standard default for every GM ECU). The Ford-capture preset uses
+        // PersonaId = "ford-capture" to swap in the logging dispatcher.
+        node.Persona = Core.Ecu.Personas.PersonaRegistry.Resolve(dto.PersonaId);
+        // Ford-capture only: load the flash bin if a path was supplied.
+        // Other personas ignore FlashBinPath. We throw on missing / unreadable
+        // so config-load failures are loud - $23 silently NRC-ing against a
+        // typo'd path would be confusing on a re-test.
+        node.FlashBinPath = dto.FlashBinPath;
+        if (dto.PersonaId == "ford-capture" && !string.IsNullOrWhiteSpace(dto.FlashBinPath))
+        {
+            Core.Ecu.Personas.FordCapturePersona.LoadFlashBin(dto.FlashBinPath!);
+        }
         foreach (var pidDto in dto.Pids)
         {
-            var pid = PidFrom(pidDto);
-            // Mode1 entries live in a separate dictionary so $22 and Service01
-            // can't reach into each other's namespace. Everything else stays
-            // in the unified pids list reachable by Pid.WireLookupId.
-            if (pid.Mode == PidMode.Mode1) node.SetMode1Pid(pid);
-            else node.AddPid(pid);
+            // AddPid routes by pid.Mode into the appropriate per-mode store.
+            node.AddPid(PidFrom(pidDto));
         }
+        // Restore any tuned AccelDecelSweep timing before the scenario is set; each absent field falls back to the
+        // SweepProfile default so a partially-specified config still loads coherently.
+        if (dto.SweepAccelMs is { } || dto.SweepLimiterHoldMs is { } || dto.SweepDecelMs is { } || dto.SweepCrossfadeMs is { }
+            || dto.SweepLimiterCutRpm is { })
+        {
+            node.EngineModel.Sweep = SweepProfile.Default with
+            {
+                AccelTimeMs = dto.SweepAccelMs ?? SweepProfile.Default.AccelTimeMs,
+                LimiterHoldMs = dto.SweepLimiterHoldMs ?? SweepProfile.Default.LimiterHoldMs,
+                DecelTimeMs = dto.SweepDecelMs ?? SweepProfile.Default.DecelTimeMs,
+                CrossfadeMs = dto.SweepCrossfadeMs ?? SweepProfile.Default.CrossfadeMs,
+                LimiterBounceRpm = dto.SweepLimiterCutRpm ?? SweepProfile.Default.LimiterBounceRpm,
+            };
+        }
+        // Restore the boot operating point for the live signal model (absent -> the engine model's default Idle).
+        if (dto.Scenario is { } scenario) node.EngineModel.SetScenario(scenario, 0);
+        // Re-apply the saved $01 supported-PID delta: start from the built-in
+        // default subset and remove the PIDs the user turned off. Absent /
+        // empty -> the full default subset stands.
+        if (dto.Mode1Disabled is { Count: > 0 } disabled)
+            node.Mode1Supported = new HashSet<byte>(J1979Catalogue.DefaultSupported.Except(disabled));
         return node;
+    }
+
+    // The $01 supported set is stored as a delta off the built-in default
+    // subset: which default PIDs has the user disabled? Returns null when the
+    // node still advertises the full default set (the common case).
+    private static List<byte>? ComputeMode1Disabled(EcuNode node)
+    {
+        var disabled = J1979Catalogue.DefaultSupported
+            .Where(p => !node.Mode1Supported.Contains(p))
+            .OrderBy(p => p)
+            .ToList();
+        return disabled.Count == 0 ? null : disabled;
     }
 
     public static Pid PidFrom(PidDto dto) => new()
@@ -235,6 +253,7 @@ public static class ConfigStore
         Offset = dto.Offset,
         Unit = dto.Unit,
         Mode = dto.Mode,
+        Signal = dto.Signal,
         WaveformConfig = dto.Waveform.ToWaveformConfig(),
         LengthBytes = dto.LengthBytes,
         StaticBytes = HexStringToBytes(dto.StaticBytes),
@@ -250,6 +269,7 @@ public static class ConfigStore
         Offset = pid.Offset,
         Unit = pid.Unit,
         Mode = pid.Mode,
+        Signal = pid.Signal,
         Waveform = WaveformDto.From(pid.WaveformConfig),
         LengthBytes = pid.LengthBytes,
         StaticBytes = BytesToHexString(pid.StaticBytes),

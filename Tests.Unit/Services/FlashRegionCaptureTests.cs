@@ -1,9 +1,6 @@
-using System.IO;
 using Common.PassThru;
-using Common.Protocol;
 using Core.Bus;
 using Core.Ecu;
-using Core.Scheduler;
 using Core.Services;
 using Core.Services.Uds;
 using EcuSimulator.Tests.TestHelpers;

@@ -1,9 +1,7 @@
-using System.IO;
 using Common.IsoTp;
 using Common.PassThru;
 using Core.Bus;
 using Core.Ecu;
-using Core.Services;
 using EcuSimulator.Tests.TestHelpers;
 using Shim.IsoTp;
 using Xunit;

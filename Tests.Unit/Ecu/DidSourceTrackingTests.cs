@@ -1,5 +1,4 @@
 using Common.Protocol;
-using Core.Ecu;
 using Core.Identification;
 using EcuSimulator.Tests.TestHelpers;
 using Xunit;

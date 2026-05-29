@@ -27,19 +27,24 @@ namespace Common.Protocol;
 /// </summary>
 public static class DefaultDidValues
 {
+    // The canned placeholder VIN: a valid 17-char VIN (GM "6G1" WMI, correct ISO 3779 check digit at position 9) so a
+    // format-validating tester accepts it rather than rejecting an impossible VIN. Built from a fixed 16-char core via
+    // Vin.WithCheckDigit; $28 (partial VIN) stays in sync as its last 6 chars.
+    private static readonly string SimVin = Vin.WithCheckDigit("6G1ZS5EDGR000001");
+
     /// <summary>
     /// Returns a placeholder byte array for the given DID, or null if no
     /// default is defined (the caller leaves that DID unconfigured).
     /// </summary>
     public static byte[]? Get(byte did) => did switch
     {
-        0x28 => Ascii("SIM000"),                            // Partial VIN (last 6)
-        0x90 => Ascii("SIMVIN00000000000"),                  // VIN (17 chars)
+        0x28 => Ascii(SimVin[^6..]),                         // Partial VIN: last 6 chars of $90
+        0x90 => Ascii(SimVin),                               // VIN (17 chars, valid ISO 3779 check digit)
         0x92 => Ascii("SIM-SUP-ID"),                         // System Supplier ID
         0x95 => Ascii("SIMSWV01"),                           // Supplier SW Version Number
         0x97 => Ascii("SimEngine"),                          // System Name / Engine Type
         0x98 => Ascii("SIM-REPSHOP"),                        // Repair Shop Code / SN
-        0x99 => Ascii(DateTime.UtcNow.ToString("yyyyMMdd")), // Programming Date
+        0x99 => Ascii(DateTime.Now.ToString("yyyyMMdd")),    // Programming Date (local wall-clock - matches tech's perspective)
         0x9A => new byte[] { 0x01, 0x00 },                   // Diagnostic Data Identifier (opaque blob)
         0x9B => new byte[] { 0x00, 0x00, 0x00, 0x00 },       // ECU Configuration / Coding
         0x9F => Ascii("00000000"),                           // History: RSCOSN

@@ -1,8 +1,8 @@
-using System.Collections.ObjectModel;
-using System.IO;
 using Core.Dps;
 using Core.Identification;
 using Microsoft.Win32;
+using System.Collections.ObjectModel;
+using System.IO;
 
 namespace GmEcuSimulator.ViewModels.PrimeWizard;
 

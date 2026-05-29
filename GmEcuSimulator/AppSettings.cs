@@ -1,7 +1,7 @@
+using Common;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Common;
 
 namespace GmEcuSimulator;
 
@@ -52,11 +52,11 @@ public sealed class AppSettings
     public bool LogSuppressTesterPresentInWindow { get; set; }
 
     /// <summary>
-    /// Active top-level mode (DPS Write / DPS Read / Flash Tool Write / Flash
-    /// Tool Read / ECU Simulator). Drives which per-mode config file the app
-    /// loads and saves, single-ECU vs multi-ECU constraints, and which tabs /
-    /// fields are visible. Default is <see cref="AppMode.EcuSimulator"/> so
-    /// fresh installs land in the original multi-ECU behaviour.
+    /// Active top-level mode (ECU Simulator / DPS Write / DPS Read).
+    /// Drives which per-mode config file the app loads and saves, single-ECU
+    /// vs multi-ECU constraints, and which tabs / fields are visible. Default
+    /// is <see cref="AppMode.EcuSimulator"/> so fresh installs land in the
+    /// original multi-ECU behaviour.
     /// </summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public AppMode Mode { get; set; } = AppMode.EcuSimulator;
@@ -78,10 +78,9 @@ public sealed class AppSettings
     public string? PrimeWizardBinLoadDir { get; set; }
 
     /// <summary>
-    /// Last directory used by File > Open / Save As / Import / Export of the
-    /// full simulator config (*.json). Shared across all four dialogs - they
-    /// all read and write the same on-disk schema, so users typically keep
-    /// them in one folder.
+    /// Last directory used by File > Open / Save As of the full simulator
+    /// config (*.json). Shared across both dialogs - they all read and write
+    /// the same on-disk schema, so users typically keep them in one folder.
     /// </summary>
     public string? LastConfigDir { get; set; }
 
@@ -108,6 +107,14 @@ public sealed class AppSettings
     /// and DPS archives, so this gets its own slot.
     /// </summary>
     public string? LastBinReplayDir { get; set; }
+
+    /// <summary>
+    /// Last directory used by the per-PID CSV waveform picker. Separate from
+    /// <see cref="LastBinReplayDir"/> because CSV traces are often
+    /// hand-crafted or exported from scope tools and live in a different
+    /// folder than full bin captures.
+    /// </summary>
+    public string? LastCsvWaveformDir { get; set; }
 
     /// <summary>
     /// Helper for dialog InitialDirectory seeding: returns <paramref name="dir"/>

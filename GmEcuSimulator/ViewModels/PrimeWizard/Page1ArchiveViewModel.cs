@@ -1,7 +1,6 @@
-using System.IO;
-using System.Windows;
 using Core.Dps;
 using Microsoft.Win32;
+using System.IO;
 
 namespace GmEcuSimulator.ViewModels.PrimeWizard;
 

@@ -1,6 +1,6 @@
-using System.Text;
 using Common.Protocol;
 using Core.Ecu;
+using System.Text;
 
 namespace Core.Identification;
 

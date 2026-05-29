@@ -1,12 +1,10 @@
+using Common.Protocol;
+using Core.Bus;
+using Core.Ecu;
+using Core.Identification;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Common.Protocol;
-using Common.Waveforms;
-using Core.Bus;
-using Core.Ecu;
-using Core.Ecu.Personas;
-using Core.Identification;
 
 namespace Core.Dps;
 
@@ -153,34 +151,26 @@ public static class ArchivePrimer
             EditedPhase3: null);
     }
 
-    // OBD-II first-ECM CAN-ID triple. Same convention as MainViewModel.AddEcu.
-    private const ushort DefaultEcmRequestId  = 0x7E0;
-    private const ushort DefaultEcmResponseId = 0x7E8;
-    private const ushort DefaultEcmUudtId     = 0x5E8;
-    private const byte DefaultEcmDiagAddress  = 0x11;
+    // OBD-II first-ECM CAN-ID triple. EcuNodeFactory owns the canonical
+    // constants now - kept here as a local alias so the ApplyTo path below
+    // still has a single name to reference when replacing an existing ECU.
+    private const ushort DefaultEcmRequestId = EcuNodeFactory.DefaultEcmRequestId;
 
     public static EcuNode BuildEcuNode(PrimedDataset dataset)
     {
-        var node = new EcuNode
-        {
-            IsPrimed = true,
-            Name = "PrimedECU",
-            PhysicalRequestCanId = DefaultEcmRequestId,
-            UsdtResponseCanId    = DefaultEcmResponseId,
-            UudtResponseCanId    = DefaultEcmUudtId,
-            DiagnosticAddress    = DefaultEcmDiagAddress,
-            ProgrammedState      = 0x00,    // FullyProgrammed: see Common/Protocol Gmw3110 §8.16
-            Persona              = Gmw3110Persona.Instance,
-        };
-
-        node.SecurityModule = Core.Security.SecurityModuleRegistry
-            .Create(dataset.Report.SecurityModuleId);
-        // Carry the config onto the node so the editor's key/value editor
-        // can re-display it, and feed it to the just-created module so
-        // module-specific options (e.g. gm-bypass-5byte's fixedSeed) take
-        // effect immediately - same pattern as ConfigStore.EcuNodeFrom.
-        node.SecurityModuleConfig = dataset.Report.SecurityModuleConfig;
-        node.SecurityModule?.LoadConfig(dataset.Report.SecurityModuleConfig);
+        // Foundation: bare primed node with the OBD-II first-ECM CAN triple,
+        // security module installed, AutoRespondFromLibrary on. Same code
+        // path BinEcuFactory uses so both factories produce identically-
+        // wired nodes; what differs is the data populated afterwards.
+        var node = EcuNodeFactory.CreatePrimed(
+            name: "PrimedECU",
+            ids: new EcuNodeFactory.CanIds(
+                PhysicalRequestId: EcuNodeFactory.DefaultEcmRequestId,
+                UsdtResponseId:    EcuNodeFactory.DefaultEcmResponseId,
+                UudtResponseId:    EcuNodeFactory.DefaultEcmUudtId,
+                DiagnosticAddress: EcuNodeFactory.DefaultEcmDiagAddress),
+            securityModuleId: dataset.Report.SecurityModuleId,
+            securityConfig:   dataset.Report.SecurityModuleConfig);
 
         // VIN on DID $90 from the archive filename, if present. Tagged Auto
         // so a later wizard edit (User) takes precedence.

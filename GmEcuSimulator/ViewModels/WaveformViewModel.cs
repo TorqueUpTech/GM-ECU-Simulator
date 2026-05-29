@@ -1,5 +1,8 @@
 using Common.Waveforms;
 using Core.Ecu;
+using Microsoft.Win32;
+using System.IO;
+using System.Windows;
 
 namespace GmEcuSimulator.ViewModels;
 
@@ -10,7 +13,15 @@ public sealed class WaveformViewModel : NotifyPropertyChangedBase
 {
     private readonly Pid pid;
 
-    public WaveformViewModel(Pid pid) { this.pid = pid; }
+    public WaveformViewModel(Pid pid)
+    {
+        this.pid = pid;
+        PickCsvFileCommand = new RelayCommand(PickCsvFile);
+        ClearCsvFileCommand = new RelayCommand(ClearCsvFile, () => !string.IsNullOrEmpty(CsvFilePath));
+    }
+
+    public RelayCommand PickCsvFileCommand { get; }
+    public RelayCommand ClearCsvFileCommand { get; }
 
     private void Rebuild()
     {
@@ -24,13 +35,25 @@ public sealed class WaveformViewModel : NotifyPropertyChangedBase
             FrequencyHz = FrequencyHz,
             PhaseDeg = PhaseDeg,
             DutyCycle = DutyCycle,
+            CsvFilePath = CsvFilePath,
+            CsvLoopMode = CsvLoopMode,
         };
     }
 
     public WaveformShape Shape
     {
         get => pid.WaveformConfig.Shape;
-        set { if (pid.WaveformConfig.Shape != value) { pid.WaveformConfig.Shape = value; Rebuild(); OnPropertyChanged(); OnPropertyChanged(nameof(SupportsAmplitude)); OnPropertyChanged(nameof(SupportsFrequency)); OnPropertyChanged(nameof(SupportsDuty)); } }
+        set
+        {
+            if (pid.WaveformConfig.Shape == value) return;
+            pid.WaveformConfig.Shape = value;
+            Rebuild();
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SupportsAmplitude));
+            OnPropertyChanged(nameof(SupportsFrequency));
+            OnPropertyChanged(nameof(SupportsDuty));
+            OnPropertyChanged(nameof(SupportsCsv));
+        }
     }
 
     public double Amplitude
@@ -63,9 +86,81 @@ public sealed class WaveformViewModel : NotifyPropertyChangedBase
         set { if (pid.WaveformConfig.DutyCycle != value) { pid.WaveformConfig.DutyCycle = value; Rebuild(); OnPropertyChanged(); } }
     }
 
+    public string? CsvFilePath
+    {
+        get => pid.WaveformConfig.CsvFilePath;
+        set
+        {
+            if (pid.WaveformConfig.CsvFilePath == value) return;
+            pid.WaveformConfig.CsvFilePath = value;
+            Rebuild();
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CsvFileDisplay));
+        }
+    }
+
+    public CsvLoopMode CsvLoopMode
+    {
+        get => pid.WaveformConfig.CsvLoopMode;
+        set { if (pid.WaveformConfig.CsvLoopMode != value) { pid.WaveformConfig.CsvLoopMode = value; Rebuild(); OnPropertyChanged(); } }
+    }
+
+    // Short, label-friendly view of the configured CSV. Bound in the XAML
+    // beside the picker button so the user can see which file is loaded
+    // without giving up the full path on hover.
+    public string CsvFileDisplay
+        => string.IsNullOrEmpty(CsvFilePath) ? "(no file picked)" : Path.GetFileName(CsvFilePath);
+
     // Used by the XAML to disable irrelevant fields per shape. FileStream and Constant don't have an inherent
     // amplitude or frequency - FileStream takes its samples from the loaded bin, Constant is a fixed offset.
-    public bool SupportsAmplitude => Shape != WaveformShape.Constant && Shape != WaveformShape.FileStream;
-    public bool SupportsFrequency => Shape != WaveformShape.Constant && Shape != WaveformShape.FileStream;
+    // CsvFile's amplitude/frequency are likewise meaningless - the waveform shape comes from the file rows.
+    public bool SupportsAmplitude => Shape != WaveformShape.Constant
+                                  && Shape != WaveformShape.FileStream
+                                  && Shape != WaveformShape.CsvFile;
+    public bool SupportsFrequency => Shape != WaveformShape.Constant
+                                  && Shape != WaveformShape.FileStream
+                                  && Shape != WaveformShape.CsvFile;
     public bool SupportsDuty => Shape == WaveformShape.Square;
+    public bool SupportsCsv => Shape == WaveformShape.CsvFile;
+
+    private void PickCsvFile()
+    {
+        var settings = AppSettings.Load();
+        var picker = new OpenFileDialog
+        {
+            Filter = "CSV (*.csv)|*.csv|All files|*.*",
+            Title = "Pick a CSV (column A = time in seconds, column B = value)",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastCsvWaveformDir),
+        };
+        if (picker.ShowDialog() != true) return;
+
+        try
+        {
+            var result = CsvReplayLoader.Load(picker.FileName);
+            var summary = result.SkippedHeader
+                ? $"Loaded {result.Samples.Count} rows (header row skipped)."
+                : $"Loaded {result.Samples.Count} rows.";
+            MessageBox.Show(summary, "CSV waveform",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"The selected file is not a compatible waveform CSV:\n\n{ex.Message}",
+                "CSV waveform",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var chosenDir = Path.GetDirectoryName(picker.FileName);
+        if (!string.IsNullOrEmpty(chosenDir))
+        {
+            settings.LastCsvWaveformDir = chosenDir;
+            settings.Save();
+        }
+
+        CsvFilePath = picker.FileName;
+    }
+
+    private void ClearCsvFile() => CsvFilePath = null;
 }

@@ -140,7 +140,7 @@ public static class Service36Handler
             // kernel only writes inside declared regions after erasing, so
             // an out-of-region write is a kernel bug we don't want to
             // silently truncate.
-            long endAddrExclusive = (long)startingAddress + dataRecord.Length;
+            long endAddrExclusive = startingAddress + dataRecord.Length;
             foreach (var region in node.State.CapturedFlashRegions)
             {
                 if (startingAddress >= region.StartAddress
@@ -159,7 +159,15 @@ public static class Service36Handler
         // timeout. Done before the positive response so wire ordering matches
         // a real kernel handover.
         if (sub == 0x80)
+        {
+            // Explicit kernel-handover boundary: whatever the host just
+            // finished pushing IS the kernel by definition. Sniff & dump a
+            // tagged copy alongside the per-$36 fragments before the
+            // persona swap.
+            if (ch.Bus is not null)
+                BootloaderCaptureWriter.WriteCompletedBracketIfKernel(node, ch.Bus, "exec");
             node.Persona = UdsKernelPersona.Instance;
+        }
 
         node.State.Fragmenter.EnqueueResponse(ch, node.UsdtResponseCanId,
             [Service.Positive(Service.TransferData)]);

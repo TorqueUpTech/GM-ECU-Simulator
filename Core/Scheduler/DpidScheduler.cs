@@ -172,10 +172,9 @@ public sealed class DpidScheduler : IDisposable
         int pos = CanFrame.IdBytes + 1;
         foreach (var p in dpid.Pids)
         {
-            ValueCodec.Encode(
-                p.Waveform.Sample(timeMs),
-                p.Scalar, p.Offset, p.DataType, (int)p.Size,
-                buf.AsSpan(pos, (int)p.Size));
+            // Route through the PID so a signal-backed (or static) PID streams its live value, not just its raw
+            // waveform. DPID slots are fixed-width at p.Size, so fill exactly that many bytes.
+            p.WriteResponseBytes(timeMs, buf.AsSpan(pos, (int)p.Size));
             pos += (int)p.Size;
         }
         return buf;

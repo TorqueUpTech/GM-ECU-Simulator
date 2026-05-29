@@ -1,6 +1,6 @@
-using System.Collections.Concurrent;
 using Common.IsoTp;
 using Common.PassThru;
+using System.Collections.Concurrent;
 
 namespace Shim.IsoTp;
 

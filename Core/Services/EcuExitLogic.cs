@@ -1,10 +1,8 @@
-using Common.PassThru;
 using Common.Protocol;
 using Core.Bus;
 using Core.Ecu;
 using Core.Ecu.Personas;
 using Core.Scheduler;
-using Core.Transport;
 
 namespace Core.Services;
 
@@ -62,7 +60,13 @@ public static class EcuExitLogic
         //     paths construct ECUs with no bus attached at all).
         var captureBus = respondOn?.Bus ?? node.State.LastEnhancedChannel?.Bus;
         if (captureBus is not null)
+        {
+            // Session-end bracket close: a kernel that was pushed but never
+            // followed by another $34 (e.g. cal-only flow ended via $20, or
+            // P3C timed out mid-transfer) still gets a tagged dump here.
+            BootloaderCaptureWriter.WriteCompletedBracketIfKernel(node, captureBus, "end");
             BootloaderCaptureWriter.WriteFlashRegions(node, captureBus);
+        }
 
         // 3b. Clear $28 / $A5 / $34 / $36 programming-session state. Per
         //     GMW3110 §8.17 "The tester can end a programming event by sending

@@ -1,6 +1,6 @@
+using Core.Identification.Segments;
 using System.Buffers.Binary;
 using System.Text;
-using Core.Identification.Segments;
 using Xunit;
 
 namespace EcuSimulator.Tests.Identification;

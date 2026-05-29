@@ -1,7 +1,7 @@
 using Common.Protocol;
 using Core.Bus;
 using Core.Ecu;
-using Core.Transport;
+using Core.Pids;
 
 namespace Core.Services;
 
@@ -61,6 +61,12 @@ public static class Service22Handler
             // (Address-as-memory-addr, alias derived) in one pass; Mode1A
             // rows aren't reachable here and won't match.
             var pid = node.GetPidByWireId(pidId);
+            // Fallback to the embedded library so a fresh ECU answers any of
+            // the ~605 A2L-derived Mode22 PIDs with a zero-filled payload of
+            // the right wire length. User-curated entries above still win on
+            // collision; only true misses fall through.
+            if (pid == null && node.AutoRespondFromLibrary)
+                pid = PidLibraryResponder.GetMode22(pidId);
             if (pid != null) supported.Add((pidId, pid));
         }
 

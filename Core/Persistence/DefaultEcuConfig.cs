@@ -104,5 +104,13 @@ public static class DefaultEcuConfig
     {
         if (bus.Nodes.Count > 0) return;
         ConfigStore.ApplyTo(Build(), bus);
+
+        // Give the first-launch ECM/TCM the same baseline identity + live $22 set a button-added ECU gets, so a fresh
+        // install answers $1A $90 and shows scenario-correlated $22 values immediately.
+        foreach (var node in bus.Nodes)
+        {
+            Core.Ecu.EcuIdentitySeeder.Seed(node);
+            Core.Ecu.EcuMode22Seeder.Seed(node);
+        }
     }
 }

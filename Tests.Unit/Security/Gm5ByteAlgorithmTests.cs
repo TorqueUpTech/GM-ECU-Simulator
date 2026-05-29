@@ -1,9 +1,8 @@
-using System.Text.Json;
 using Common.Protocol;
-using Core.Security;
 using Core.Security.Algorithms;
 using Core.Services;
 using EcuSimulator.Tests.TestHelpers;
+using System.Text.Json;
 using Xunit;
 
 namespace EcuSimulator.Tests.Security;
@@ -143,6 +142,6 @@ public sealed class Gm5ByteAlgorithmTests
         var resp = TestFrame.DequeueSingleFrameUsdt(ch);
         Assert.Equal(Service.NegativeResponse, resp[0]);
         Assert.Equal(Service.SecurityAccess, resp[1]);
-        Assert.Equal((byte)Nrc.InvalidKey, resp[2]);
+        Assert.Equal(Nrc.InvalidKey, resp[2]);
     }
 }

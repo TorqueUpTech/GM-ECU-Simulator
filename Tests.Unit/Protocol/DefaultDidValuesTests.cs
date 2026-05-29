@@ -1,4 +1,5 @@
 using Common.Protocol;
+using System.Text;
 using Xunit;
 
 namespace EcuSimulator.Tests.Protocol;
@@ -66,5 +67,14 @@ public class DefaultDidValuesTests
         Assert.Equal(8, bytes!.Length);
         foreach (var b in bytes)
             Assert.InRange(b, (byte)'0', (byte)'9');
+    }
+
+    [Fact]
+    public void Vin_default_is_a_valid_iso3779_vin()
+    {
+        var vin = Encoding.ASCII.GetString(DefaultDidValues.Get(0x90)!);
+        Assert.Equal(17, vin.Length);
+        Assert.DoesNotContain(vin, c => c is 'I' or 'O' or 'Q');   // reserved letters must never appear in a VIN
+        Assert.True(Vin.IsCheckDigitValid(vin), $"default VIN check digit invalid: {vin}");
     }
 }

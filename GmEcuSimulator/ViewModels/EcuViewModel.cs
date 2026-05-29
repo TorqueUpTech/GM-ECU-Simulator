@@ -1,10 +1,5 @@
-using System.Collections.ObjectModel;
-using System.ComponentModel;
-using System.Collections.Specialized;
-using System.IO;
-using System.Text.Json;
-using System.Windows;
 using Common.Protocol;
+using Common.Signals;
 using Common.Waveforms;
 using Core.Ecu;
 using Core.Identification;
@@ -12,6 +7,13 @@ using Core.Scheduler;
 using Core.Security;
 using Core.Services;
 using Microsoft.Win32;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.IO;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Data;
 
 namespace GmEcuSimulator.ViewModels;
 
@@ -22,6 +24,16 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
 {
     public EcuNode Model { get; }
     public ObservableCollection<PidViewModel> Pids { get; } = new();
+
+    // The ECU's $01 (OBD-II) PIDs: read-only catalogue rows with a per-PID Supported toggle, shown in the editor's
+    // "$01 (OBD-II)" section. Together with the editable Pids grid ($1A/$22/$2D) this is the whole-ECU view.
+    public ObservableCollection<J1979RowViewModel> Obd2Pids { get; } = new();
+
+    // The editable modes, each rendered as its own collapsible section in the editor (mirrors the read-only "$01"
+    // section). Every section is an independent filtered/sorted view over the single shared Pids collection above, so
+    // Add/Remove/alias-collision logic keeps operating on Pids directly. Order = display order top-to-bottom.
+    public IReadOnlyList<PidModeSection> Sections { get; }
+
     public GlitchConfigViewModel Glitch { get; }
     private PidViewModel? selectedPid;
 
@@ -29,14 +41,24 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     {
         Model = model;
         Glitch = new GlitchConfigViewModel(model.Glitch);
-        // Surface BOTH the unified Pids list and the separate Mode1Pids
-        // store under one VM collection so the editor grid renders all
-        // rows together regardless of which underlying dictionary they
-        // live in. The Mode setter on PidViewModel moves the underlying
-        // model between stores when the user flips into/out of Mode1.
-        foreach (var pid in model.Pids) Pids.Add(new PidViewModel(pid, this));
-        foreach (var kv in model.Mode1Pids.OrderBy(p => p.Key))
-            Pids.Add(new PidViewModel(kv.Value, this));
+        // AllPids unions the four per-mode stores in deterministic order
+        // (Mode22 -> Mode2D -> Mode1A -> Mode1), so the editor grid renders
+        // every row regardless of which underlying dictionary owns it. The
+        // Mode setter on PidViewModel calls EcuNode.RelocatePidMode when
+        // the user flips a row, which moves the underlying Pid between
+        // stores without churning this ObservableCollection.
+        foreach (var pid in model.AllPids) Pids.Add(new PidViewModel(pid, this));
+        foreach (var def in J1979Catalogue.All) Obd2Pids.Add(new J1979RowViewModel(def, model));
+
+        // One collapsible section per editable mode. Each builds its own filtered/sorted view over Pids and its own
+        // column-filter set; the order here is the editor's top-to-bottom order.
+        Sections = new[]
+        {
+            new PidModeSection(this, PidMode.Mode1A, "$1A (Identity / ReadDataByIdentifier)", Pids),
+            new PidModeSection(this, PidMode.Mode22, "$22 (ReadDataByIdentifier)", Pids),
+            new PidModeSection(this, PidMode.Mode2D, "$2D (DefinePIDByAddress)", Pids),
+        };
+
         // Re-evaluate Mode2D alias collisions whenever rows are added,
         // removed, or replaced. Per-row mode/address edits flow through
         // PidViewModel -> RaisePidsChanged which also calls this; the two
@@ -78,6 +100,81 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     /// needed when the user re-opens the prime wizard via EditPrimeCommand.
     /// </summary>
     public void BindBus(Core.Bus.VirtualBus bus) => this.bus = bus;
+
+    // The operating points the user can drive this ECU through; bound to the Scenario ComboBox in the inspector.
+    public ScenarioId[] Scenarios { get; } = Enum.GetValues<ScenarioId>();
+
+    // The live operating point. Backed by the engine model (not a VM field) so it always reflects the model. Setting
+    // it ramps the signals toward the new scenario from the current bus clock, which a connected tool sees move on
+    // Mode $01 and on any signal-backed $22 PIDs.
+    public ScenarioId SelectedScenario
+    {
+        get => Model.EngineModel.ActiveScenario;
+        set
+        {
+            if (Model.EngineModel.ActiveScenario == value) return;
+            Model.EngineModel.SetScenario(value, bus?.NowMs ?? 0);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsSweep));
+        }
+    }
+
+    // True only for AccelDecelSweep, so the editor can show the sweep-timing knobs below the scenario combo.
+    public bool IsSweep => Model.EngineModel.ActiveScenario == ScenarioId.AccelDecelSweep;
+
+    // The three AccelDecelSweep knobs, in seconds for the editor (the model stores ms). Each rebuilds the profile
+    // record with-expression-style so the other fields are preserved; clamped non-negative. PeriodMs = the sum.
+    public double SweepAccelSeconds
+    {
+        get => Model.EngineModel.Sweep.AccelTimeMs / 1000.0;
+        set
+        {
+            Model.EngineModel.Sweep = Model.EngineModel.Sweep with { AccelTimeMs = Math.Max(0, value) * 1000.0 };
+            OnPropertyChanged();
+        }
+    }
+
+    public double SweepLimiterHoldSeconds
+    {
+        get => Model.EngineModel.Sweep.LimiterHoldMs / 1000.0;
+        set
+        {
+            Model.EngineModel.Sweep = Model.EngineModel.Sweep with { LimiterHoldMs = Math.Max(0, value) * 1000.0 };
+            OnPropertyChanged();
+        }
+    }
+
+    public double SweepDecelSeconds
+    {
+        get => Model.EngineModel.Sweep.DecelTimeMs / 1000.0;
+        set
+        {
+            Model.EngineModel.Sweep = Model.EngineModel.Sweep with { DecelTimeMs = Math.Max(0, value) * 1000.0 };
+            OnPropertyChanged();
+        }
+    }
+
+    // Entry cross-fade: how long the pull eases in from the previous operating point when the sweep is selected.
+    public double SweepCrossfadeSeconds
+    {
+        get => Model.EngineModel.Sweep.CrossfadeMs / 1000.0;
+        set
+        {
+            Model.EngineModel.Sweep = Model.EngineModel.Sweep with { CrossfadeMs = Math.Max(0, value) * 1000.0 };
+            OnPropertyChanged();
+        }
+    }
+
+    // Rev-limiter cut: the +/- rpm the engine bounces by while on the limiter (fuel/spark-cut amplitude). In rpm.
+    public double SweepLimiterCutRpm
+    {
+        get => Model.EngineModel.Sweep.LimiterBounceRpm;
+        set
+        {
+            Model.EngineModel.Sweep = Model.EngineModel.Sweep with { LimiterBounceRpm = Math.Max(0, value) };
+            OnPropertyChanged();
+        }
+    }
 
     /// <summary>
     /// Called by MainViewModel after the wizard registers a new primed ECU.
@@ -243,11 +340,17 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         if (!string.IsNullOrEmpty(result.CalibrationPartNumber))
             applied.Add($"Cal P/N ({result.CalibrationPartNumber} - not stored, no fixed DID)");
 
+        // Surface the just-loaded identity as editable $1A rows. Apply() writes the runtime identifier
+        // dictionary, but the editor's $1A section (and the $1A handler's preferred lookup) work off Mode1A
+        // Pid rows - so without this the rows never appear and the synthetic seeded $90 placeholder would
+        // even shadow the bin's real VIN on the wire.
+        MaterializeIdentifiersToMode1ARows(mode);
+
         // Compose a summary message - shows which fields were populated and
         // surfaces any parser warnings (e.g. "no trampoline pattern detected").
         string modeLabel = mode == BinIdentificationApplier.LoadMode.ReplaceAll
-            ? "Replace all (existing DIDs cleared first)"
-            : "Add only if blank (existing DIDs preserved)";
+            ? "Replace all ($1A rows become exactly the bin's set)"
+            : "Merge (bin values added; rows the bin doesn't provide kept)";
         var lines = new List<string>
         {
             $"Mode: {modeLabel}",
@@ -276,6 +379,44 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
 
         MessageBox.Show(string.Join(Environment.NewLine, lines),
             "Load Info From Bin", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    // Mirrors the runtime identifier dictionary (just written by BinIdentificationApplier.Apply) into editable
+    // Mode1A Pid rows so the bin's identity shows in the editor's $1A section, persists in config, and is the value
+    // the $1A handler returns (the handler prefers Mode1A rows over the dict, so the row MUST carry the bin value or
+    // a stale seeded placeholder would shadow it). The bin is the source the user explicitly chose, so it overwrites
+    // any existing row for the same DID; ReplaceAll additionally drops $1A rows the bin didn't surface.
+    private void MaterializeIdentifiersToMode1ARows(BinIdentificationApplier.LoadMode mode)
+    {
+        if (mode == BinIdentificationApplier.LoadMode.ReplaceAll)
+            foreach (var vm in Pids.Where(p => p.Model.Mode == PidMode.Mode1A).ToList())
+                RemovePid(vm);
+
+        foreach (var did in Model.Identifiers.Keys.OrderBy(d => d))
+        {
+            var data = Model.GetIdentifier(did);
+            if (data is null || data.Length == 0) continue;
+
+            // Overwrite any existing row for this DID (e.g. the seeded $90 placeholder) with the bin value.
+            var existing = Pids.FirstOrDefault(p => p.Model.Mode == PidMode.Mode1A
+                                                 && (byte)(p.Model.Address & 0xFF) == did);
+            if (existing != null) RemovePid(existing);
+
+            var pid = new Pid
+            {
+                Mode        = PidMode.Mode1A,
+                Address     = did,
+                Name        = Gmw3110DidNames.NameOf(did) ?? $"DID {did:X2}",
+                StaticBytes = data,
+                LengthBytes = data.Length,
+                Size        = PidSize.DWord,
+                DataType    = PidDataType.Unsigned,
+            };
+            Model.AddPid(pid);
+            Pids.Add(new PidViewModel(pid, this));
+        }
+
+        foreach (var s in Sections) s.Refresh();
     }
 
     /// <summary>
@@ -391,6 +532,22 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         }
     }
 
+    // Per-ECU gate for the embedded PID-library fallback. When on, $1A / $22 / $01 requests for an identifier this ECU
+    // has no curated row for answer with a synthetic library payload instead of NRC $31; when off the ECU is strict and
+    // NRCs anything unconfigured, matching how real silicon rejects DIDs it does not implement. Mutates the live
+    // EcuNode directly, so a toggle takes effect on the next request with no apply step. Two-way bound to the Advanced
+    // card's checkbox.
+    public bool AutoRespondFromLibrary
+    {
+        get => Model.AutoRespondFromLibrary;
+        set
+        {
+            if (Model.AutoRespondFromLibrary == value) return;
+            Model.AutoRespondFromLibrary = value;
+            OnPropertyChanged();
+        }
+    }
+
     private static bool TryParseHexByte(string s, out byte v)
     {
         var trimmed = (s ?? "").Trim();
@@ -399,13 +556,29 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
                              System.Globalization.CultureInfo.InvariantCulture, out v);
     }
 
+    // The single "active row" across all sections. The waveform inspector and the per-ECU Remove route through this;
+    // each section's grid drives it via NotifySectionSelected. Setting it from code (e.g. after Add) does NOT clear
+    // the sections - NotifySectionSelected owns the cross-section deselect.
     public PidViewModel? SelectedPid
     {
         get => selectedPid;
         set => SetField(ref selectedPid, value);
     }
 
-    public void AddPid()
+    // Called by a section when the user selects one of its rows. Promotes the row to the shared SelectedPid and clears
+    // every other section's selection so only one row is highlighted across the whole editor.
+    internal void NotifySectionSelected(PidModeSection source, PidViewModel pid)
+    {
+        SelectedPid = pid;
+        foreach (var s in Sections)
+            if (!ReferenceEquals(s, source)) s.ClearSelection();
+    }
+
+    // Add a new PID into a specific mode's section. The Mode column is gone, so the section's Add button stamps its
+    // mode here; the new row appears in that section (and only that section) because each section's view filters by
+    // Mode. Catalogue-driven modes ($1A / $22) start on a placeholder address the user re-points via the Identifier
+    // dropdown; $2D rows start on the next free byte range so a hand-rolled address doesn't overlap an existing one.
+    public void AddPid(PidMode mode)
     {
         // Default the new PID to Word (2 bytes). Pick the next address that
         // doesn't overlap an existing PID's [Address, Address+ResponseLength)
@@ -445,80 +618,84 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
             Name = name,
             Size = NewSize,
             DataType = PidDataType.Unsigned,
+            Mode = mode,
             Scalar = 1.0,
             Offset = 0.0,
             Unit = "",
             WaveformConfig = new WaveformConfig { Shape = WaveformShape.Sin, Amplitude = 50, Offset = 50, FrequencyHz = 1.0 },
         };
+        // AddPid routes by pid.Mode into the right per-mode store.
         Model.AddPid(pid);
         var vm = new PidViewModel(pid, this);
-        Pids.Add(vm);
-        SelectedPid = vm;
+        Pids.Add(vm);                       // ListCollectionView in each section re-flows; only the matching one shows it
+        RefreshAliasCollisions();
+        var section = Sections.FirstOrDefault(s => s.Mode == mode);
+        if (section != null) section.SelectedPid = vm;   // selects in-section + promotes to SelectedPid
+        else SelectedPid = vm;
+    }
+
+    // Back-compat no-arg add (MainViewModel's top toolbar): default to a $22 row.
+    public void AddPid() => AddPid(PidMode.Mode22);
+
+    // Remove a specific row (the section Remove buttons call this with the section's selection).
+    public void RemovePid(PidViewModel vm)
+    {
+        // RemovePid routes to the correct per-mode store based on Pid.Mode.
+        Model.RemovePid(vm.Model);
+        Pids.Remove(vm);
+        foreach (var s in Sections) s.ClearSelection();
+        if (ReferenceEquals(selectedPid, vm)) SelectedPid = null;
+        RefreshAliasCollisions();
     }
 
     public void RemoveSelectedPid()
     {
-        if (selectedPid == null) return;
-        // Drop from whichever store the row lives in. Mode1 entries are
-        // keyed by 1-byte PID id in the separate Mode1Pids dictionary.
-        if (selectedPid.Model.Mode == PidMode.Mode1)
-            Model.RemoveMode1Pid((byte)(selectedPid.Model.Address & 0xFF));
-        else
-            Model.RemovePid(selectedPid.Model);
-        Pids.Remove(selectedPid);
-        SelectedPid = null;
+        if (selectedPid != null) RemovePid(selectedPid);
     }
 
     /// <summary>
-    /// Called by PidViewModel.Mode when the user flips a row into or out of
-    /// Mode1. The underlying Pid object is the same; only its EcuNode-side
-    /// storage location changes. The Pids ObservableCollection isn't touched -
-    /// the same VM entry continues to render the same model.
+    /// Called by PidViewModel.Mode when the user flips a row's mode. The
+    /// underlying Pid object stays the same; only its EcuNode-side storage
+    /// location changes - <see cref="EcuNode.RelocatePidMode"/> handles the
+    /// move atomically. The Pids ObservableCollection isn't touched, so the
+    /// same VM entry keeps rendering the same model.
     /// </summary>
     public void OnPidModeChanged(Pid pid, PidMode oldMode, PidMode newMode)
     {
         if (oldMode == newMode) return;
-        bool wasMode1 = oldMode == PidMode.Mode1;
-        bool isMode1  = newMode == PidMode.Mode1;
-        if (wasMode1 == isMode1) return;  // crossing the Mode1 boundary is the only thing that moves storage
-        if (wasMode1)
-        {
-            Model.RemoveMode1Pid((byte)(pid.Address & 0xFF));
-            Model.AddPid(pid);
-        }
-        else
-        {
-            Model.RemovePid(pid);
-            Model.SetMode1Pid(pid);
-        }
+        // PidViewModel has already set pid.Mode = newMode by the time we get
+        // here, so pass oldMode explicitly to find the source store.
+        Model.RelocatePidMode(pid, oldMode);
     }
+
+    // Called by PidViewModel.Address when the user edits a row's address. The per-mode stores are keyed by Address, so
+    // the model has to re-key the entry. Otherwise GetPid / GetPidByWireId miss after the edit and the ECU NRCs the
+    // request - e.g. a $2D or $22 read returns RequestOutOfRange. PidViewModel has already written the new address onto
+    // the model, so pass the prior address to find the existing entry.
+    internal void OnPidAddressChanged(Pid pid, uint oldAddress)
+        => Model.RekeyPidAddress(pid, oldAddress);
 
     /// <summary>
     /// Atomically replace this ECU's PID list with <paramref name="loaded"/>.
     /// Used by the SetupWindow's Load PIDs button: clears the model + VM
     /// collection, then appends each new PID through the same pipeline
-    /// AddPid uses so the model's address lookup and the observable list
+    /// AddPid uses so the model's per-mode stores and the observable list
     /// stay in sync.
     /// </summary>
     public void ReplacePids(IEnumerable<Pid> loaded)
     {
-        // Tear down both stores. Iterate the VM collection (the unified view)
-        // and remove each row from whichever underlying store owns it.
+        // RemovePid routes by Pid.Mode into the right store.
         foreach (var existing in Pids.Select(p => p.Model).ToList())
-        {
-            if (existing.Mode == PidMode.Mode1)
-                Model.RemoveMode1Pid((byte)(existing.Address & 0xFF));
-            else
-                Model.RemovePid(existing);
-        }
+            Model.RemovePid(existing);
         Pids.Clear();
         SelectedPid = null;
         foreach (var pid in loaded)
         {
-            if (pid.Mode == PidMode.Mode1) Model.SetMode1Pid(pid);
-            else                            Model.AddPid(pid);
+            // AddPid routes by pid.Mode into the right store.
+            Model.AddPid(pid);
             Pids.Add(new PidViewModel(pid, this));
         }
+        foreach (var s in Sections) s.Refresh();   // re-apply each section's filter + sort to the swapped-in rows
         RaisePidsChanged();
     }
 
@@ -657,6 +834,12 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         // The 10Hz refresh tick would catch this within 100ms; push an
         // immediate update so the click feels instant.
         RefreshSecurity(0);
+    }
+
+    // Called from the main refresh timer to refresh the $01 section's live wire-byte readout.
+    public void RefreshObd2Live(double timeMs)
+    {
+        foreach (var row in Obd2Pids) row.RefreshLive(timeMs);
     }
 
     /// <summary>Called from the main refresh timer to update the live security display.</summary>

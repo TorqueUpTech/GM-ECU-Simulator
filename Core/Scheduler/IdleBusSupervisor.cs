@@ -1,4 +1,3 @@
-using Common.Protocol;
 using Core.Bus;
 using Core.Ecu;
 using Core.Services;

@@ -1,8 +1,9 @@
-using System.Text.Json;
 using Common.Glitch;
 using Common.Protocol;
+using Common.Signals;
 using Core.Ecu.Personas;
 using Core.Security;
+using System.Text.Json;
 
 namespace Core.Ecu;
 
@@ -68,17 +69,38 @@ public sealed class EcuNode
     // injection logic in Core/Services is NOT yet implemented.
     public GlitchConfig Glitch { get; set; } = GlitchConfig.CreateDefault();
 
-    private readonly List<Pid> pids = new();
-    private readonly Lock pidsLock = new();
+    /// <summary>
+    /// When true, $22 / $01 / $1A requests for an identifier the ECU has not
+    /// been explicitly configured for fall through to <c>PidLibraryResponder</c>
+    /// (embedded A2L-derived catalogues) and answer with a zero-filled payload
+    /// of the library-defined length. User-curated entries in the per-mode PID
+    /// stores and <see cref="Identifiers"/> still win on collision (primary
+    /// store is consulted first); the library only fills the gaps so a fresh
+    /// ECU responds to any of the ~605 + 39 + 37 known DIDs without manual setup.
+    ///
+    /// Defaults to <c>false</c> so direct <c>new EcuNode()</c> construction
+    /// (used by test fixtures that assert NRC $31 for unconfigured DIDs) keeps
+    /// its strict behaviour. Live ECUs flip it on via <c>EcuDto</c> (default
+    /// true in the persistence schema) and <see cref="Dps.ArchivePrimer.BuildEcuNode"/>.
+    /// </summary>
+    public bool AutoRespondFromLibrary { get; set; }
 
-    // OBD-II Service $01 (J1979) PIDs live in a separate dictionary keyed by
-    // the 1-byte PID id so $22 lookups can't accidentally answer a Mode 1
-    // request and vice versa. The two stores have disjoint identifier spaces
-    // on the wire (1-byte vs 2-byte) and disjoint dispatchers - real silicon
-    // routes them through different code paths and the simulator follows the
-    // split. Editor moves rows between stores when the user flips PidMode.
-    private readonly Dictionary<byte, Pid> mode1Pids = new();
-    private readonly Lock mode1PidsLock = new();
+    // Three mode-keyed stores. Each PidMode owns its own dictionary keyed by the slice of Pid.Address the wire uses
+    // for lookup, so a $1A request for DID $0C and a $22 request for 0x000C never reach into each other's namespace.
+    // A single lock guards all three for simple atomic Add/Remove/Relocate. (Mode $01 is no longer a store - it is
+    // the built-in J1979 projection over the signal layer; see Mode1Supported / Service01Handler.)
+    //
+    // Keys:
+    //   mode1APids  key = (byte)(Pid.Address & 0xFF)        GMW3110 DID
+    //   mode22Pids  key = (ushort)(Pid.Address & 0xFFFF)    $22 wire PID id
+    //   mode2DPids  key = Pid.Address                       full 32-bit RAM addr
+    //
+    // $22 wire lookup for Mode2D goes through GetPidByWireId, which derives
+    // the alias 0xF000 | (addr & 0x0FFF) from each Mode2D entry's address.
+    private readonly Dictionary<byte,   Pid> mode1APids = new();
+    private readonly Dictionary<ushort, Pid> mode22Pids = new();
+    private readonly Dictionary<uint,   Pid> mode2DPids = new();
+    private readonly Lock pidsLock = new();
 
     // GMW3110 §8.3 ReadDataByIdentifier ($1A) data. Each DID maps to a raw
     // byte array; the service handler returns [$5A, did, ...bytes] verbatim
@@ -107,6 +129,41 @@ public sealed class EcuNode
     // NodeState. EcuNode keeps user config; State carries runtime state.
     public NodeState State { get; } = new();
 
+    // Signal-layer model for the redesigned diagnostic modes, added alongside the legacy per-mode Pid stores so the
+    // modes can migrate one at a time ($01 reads from here first). The universal physics live in EngineModel /
+    // J1979Catalogue (shared by every ECU); only the per-ECU pieces sit on the node.
+
+    // Per-ECU live engine model: the scenario-driven signals every live projection reads from.
+    public EngineModel EngineModel { get; } = new();
+
+    // Per-ECU non-analog state behind the OBD-II status PIDs (MIL, DTC count, O2 layout, conformance, fuel type).
+    public DiscreteState DiscreteState { get; } = new();
+
+    // The J1979 Mode $01 PIDs this ECU advertises. The $00/$20/... support bitmasks are computed from exactly this
+    // subset, so the advertised map can never claim a PID the ECU won't answer. A per-ECU copy of the catalogue
+    // default, so toggling one ECU's set never mutates the shared default or another ECU's. The editor's $01 rows
+    // flip membership via SetMode1Supported.
+    private HashSet<byte> mode1Supported = new(J1979Catalogue.DefaultSupported);
+    public IReadOnlySet<byte> Mode1Supported
+    {
+        get => mode1Supported;
+        set => mode1Supported = new HashSet<byte>(value);
+    }
+
+    // Enable or disable a single J1979 PID in this ECU's advertised $01 subset (drives the $00/$20 support bitmask).
+    public void SetMode1Supported(byte pid, bool supported)
+    {
+        if (supported) mode1Supported.Add(pid); else mode1Supported.Remove(pid);
+    }
+
+    // For ECUs using the ford-capture persona, the path of the flash bin
+    // loaded into FordCapturePersona at config-apply time. Stored here
+    // purely so the save path (ConfigStore.EcuDtoFrom) can round-trip the
+    // field back to JSON without losing it through a UI save. The persona
+    // itself owns the byte array (static singleton); this is a bookkeeping
+    // mirror, not a second copy of the data.
+    public string? FlashBinPath { get; set; }
+
     // The diagnostic dispatch table the ECU presents on the wire RIGHT NOW.
     // Defaults to GMW3110-2010 (what every stock ECU spends its life speaking).
     // Swapped to UdsKernelPersona by Service36Handler when $36 sub $80
@@ -128,100 +185,183 @@ public sealed class EcuNode
     // its own config separately.
     public JsonElement? SecurityModuleConfig { get; set; }
 
-    /// <summary>Snapshot copy of the PID list - safe to enumerate cross-thread.</summary>
-    public IReadOnlyList<Pid> Pids
+    /// <summary>
+    /// Snapshot of every PID across every mode-keyed store, ordered by mode
+    /// then by key for deterministic enumeration. Returns an array copy under
+    /// the lock so callers can iterate cross-thread without holding it.
+    /// Replaces the legacy <c>Pids</c> + <c>Mode1Pids</c> split.
+    /// </summary>
+    public IEnumerable<Pid> AllPids
     {
-        get { lock (pidsLock) return pids.ToArray(); }
+        get
+        {
+            lock (pidsLock)
+            {
+                var arr = new Pid[mode22Pids.Count + mode2DPids.Count + mode1APids.Count];
+                int i = 0;
+                foreach (var kv in mode22Pids.OrderBy(kv => kv.Key))  arr[i++] = kv.Value;
+                foreach (var kv in mode2DPids.OrderBy(kv => kv.Key))  arr[i++] = kv.Value;
+                foreach (var kv in mode1APids.OrderBy(kv => kv.Key))  arr[i++] = kv.Value;
+                return arr;
+            }
+        }
     }
 
+    /// <summary>Look up by full <see cref="Pid.Address"/> across every store.
+    /// For Mode22/Mode1A/Mode1 the address is the wire id; for Mode2D it is the
+    /// 32-bit memory address. First match wins in Mode22 -> Mode2D -> Mode1A ->
+    /// Mode1 order.</summary>
     public Pid? GetPid(uint address)
-    {
-        lock (pidsLock) return pids.FirstOrDefault(p => p.Address == address);
-    }
-
-    // Wire-side $22 lookup. Walks the list once: Mode22 rows match on
-    // (Address & 0xFFFF); Mode2D rows match on their derived alias
-    // (0xF000 | (Address & 0x0FFF)). Mode1A rows are skipped (they're
-    // routed by Service1AHandler via GetMode1APid instead). First-match
-    // wins, mirroring GetPid's semantics.
-    public Pid? GetPidByWireId(ushort wireId)
-    {
-        lock (pidsLock)
-            return pids.FirstOrDefault(p => p.WireLookupId is ushort id && id == wireId);
-    }
-
-    // $1A handler hook. Returns the first Mode1A row whose DID byte matches,
-    // null otherwise - the caller falls back to GetIdentifier for bin/archive-
-    // seeded values that weren't overridden in the editor grid.
-    public Pid? GetMode1APid(byte did)
-    {
-        lock (pidsLock) return pids.FirstOrDefault(p => p.Mode1ADid == did);
-    }
-
-    public void AddPid(Pid pid)
     {
         lock (pidsLock)
         {
-            // Replace by address if one already exists - matches the prior
-            // ConcurrentDictionary semantics that callers relied on.
-            int existing = pids.FindIndex(p => p.Address == pid.Address);
-            if (existing >= 0) pids[existing] = pid;
-            else pids.Add(pid);
+            if (address <= 0xFFFF && mode22Pids.TryGetValue((ushort)address, out var m22)) return m22;
+            if (mode2DPids.TryGetValue(address, out var m2D))                                return m2D;
+            if (address <= 0xFF   && mode1APids.TryGetValue((byte)address, out var m1A))    return m1A;
+            return null;
+        }
+    }
+
+    /// <summary>Wire-side $22 lookup. Mode22 hits the dict directly; Mode2D
+    /// matches via the derived alias <c>0xF000 | (Address &amp; 0x0FFF)</c>.
+    /// Mode1A / Mode1 rows are unreachable here by design - $22 has its own
+    /// 2-byte PID id namespace disjoint from $1A's 1-byte DID space and $01's
+    /// 1-byte PID space.</summary>
+    public Pid? GetPidByWireId(ushort wireId)
+    {
+        lock (pidsLock)
+        {
+            if (mode22Pids.TryGetValue(wireId, out var m22)) return m22;
+            // Mode2D alias scan. The dict is typically small (single-digit
+            // entries even on heavily-used $2D sessions), so a linear walk
+            // is cheaper than maintaining a parallel alias->Pid map.
+            foreach (var (addr, pid) in mode2DPids)
+                if ((ushort)(0xF000 | (addr & 0x0FFF)) == wireId) return pid;
+            return null;
+        }
+    }
+
+    /// <summary>$1A handler hook. Returns the Mode1A row for the given DID,
+    /// or null - the caller falls back to <c>GetIdentifier</c> for bin/archive-
+    /// seeded values that weren't overridden in the editor grid.</summary>
+    public Pid? GetMode1APid(byte did)
+    {
+        lock (pidsLock) return mode1APids.TryGetValue(did, out var p) ? p : null;
+    }
+
+    /// <summary>Insert or replace a PID. Routes to the per-mode store based on
+    /// <see cref="Pid.Mode"/>; replaces any existing entry with the same key in
+    /// that store. Always raises <see cref="PidsChanged"/>.</summary>
+    public void AddPid(Pid pid)
+    {
+        // Bind every added PID to this ECU's engine model so a signal-backed PID can resolve live values; harmless
+        // for non-signal PIDs (the engine reference is only consulted when Pid.Signal is set).
+        pid.AttachEngine(EngineModel);
+        lock (pidsLock)
+        {
+            switch (pid.Mode)
+            {
+                case PidMode.Mode1A: mode1APids[(byte)(pid.Address & 0xFF)]    = pid; break;
+                case PidMode.Mode22: mode22Pids[(ushort)(pid.Address & 0xFFFF)] = pid; break;
+                case PidMode.Mode2D: mode2DPids[pid.Address]                    = pid; break;
+            }
         }
         PidsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>Remove a PID. Targets the store that owns <see cref="Pid.Mode"/>;
+    /// uses <see cref="Pid.Address"/>-derived key for the lookup. Returns true
+    /// when an entry was removed.</summary>
     public bool RemovePid(Pid pid)
     {
         bool removed;
-        lock (pidsLock) removed = pids.Remove(pid);
-        if (removed) PidsChanged?.Invoke(this, EventArgs.Empty);
+        lock (pidsLock)
+        {
+            removed = pid.Mode switch
+            {
+                PidMode.Mode1A  => mode1APids.Remove((byte)(pid.Address & 0xFF)),
+                PidMode.Mode22  => mode22Pids.Remove((ushort)(pid.Address & 0xFFFF)),
+                PidMode.Mode2D  => mode2DPids.Remove(pid.Address),
+                _               => false,
+            };
+        }
+        if (removed)
+            PidsChanged?.Invoke(this, EventArgs.Empty);
         return removed;
     }
 
+    /// <summary>Remove every PID whose <see cref="Pid.Address"/> matches across
+    /// every store. The caller doesn't know which mode owns the address - used
+    /// by <c>EcuExitLogic</c> to clean up $2D-defined dynamic PIDs (registered
+    /// as Mode22 with Address = pidId) at session end.</summary>
     public bool RemovePidByAddress(uint address)
     {
-        bool removed;
-        lock (pidsLock) removed = pids.RemoveAll(p => p.Address == address) > 0;
-        if (removed) PidsChanged?.Invoke(this, EventArgs.Empty);
+        bool removed = false;
+        lock (pidsLock)
+        {
+            if (address <= 0xFFFF && mode22Pids.Remove((ushort)address)) removed = true;
+            if (mode2DPids.Remove(address))                              removed = true;
+            if (address <= 0xFF   && mode1APids.Remove((byte)address))   removed = true;
+        }
+        if (removed)
+            PidsChanged?.Invoke(this, EventArgs.Empty);
         return removed;
     }
 
-    // ----- OBD-II Mode $01 (separate storage) -----
-
-    /// <summary>Snapshot copy of the Mode 1 PID set - safe to enumerate cross-thread.
-    /// Keys are 1-byte PID identifiers (e.g. 0x0C = Engine RPM).</summary>
-    public IReadOnlyDictionary<byte, Pid> Mode1Pids
+    /// <summary>Move <paramref name="pid"/> between mode stores in one atomic
+    /// step. Called by the editor's mode-flip handler: the underlying Pid
+    /// instance stays the same (the editor's ObservableCollection doesn't
+    /// churn), only its storage location moves. Removes from the store keyed
+    /// by <paramref name="oldMode"/>, inserts into the store keyed by the
+    /// pid's CURRENT mode (which the caller has already updated).</summary>
+    public void RelocatePidMode(Pid pid, PidMode oldMode)
     {
-        get { lock (mode1PidsLock) return new Dictionary<byte, Pid>(mode1Pids); }
+        if (oldMode == pid.Mode) return;
+        lock (pidsLock)
+        {
+            switch (oldMode)
+            {
+                case PidMode.Mode1A: mode1APids.Remove((byte)(pid.Address & 0xFF));    break;
+                case PidMode.Mode22: mode22Pids.Remove((ushort)(pid.Address & 0xFFFF)); break;
+                case PidMode.Mode2D: mode2DPids.Remove(pid.Address);                    break;
+            }
+            switch (pid.Mode)
+            {
+                case PidMode.Mode1A: mode1APids[(byte)(pid.Address & 0xFF)]    = pid; break;
+                case PidMode.Mode22: mode22Pids[(ushort)(pid.Address & 0xFFFF)] = pid; break;
+                case PidMode.Mode2D: mode2DPids[pid.Address]                    = pid; break;
+            }
+        }
+        PidsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public Pid? GetMode1Pid(byte pidId)
+    // Re-key a PID after its Address changed in place. The per-mode stores are keyed by Address, so editing only
+    // Pid.Address (the editor's Address column) would leave the entry under its old key and every GetPid /
+    // GetPidByWireId lookup by the new address would miss. Callers pass the prior address so we can move the entry
+    // within the PID's current mode store. No-op when the address is unchanged.
+    public void RekeyPidAddress(Pid pid, uint oldAddress)
     {
-        lock (mode1PidsLock) return mode1Pids.TryGetValue(pidId, out var p) ? p : null;
+        if (oldAddress == pid.Address) return;
+        lock (pidsLock)
+        {
+            switch (pid.Mode)
+            {
+                case PidMode.Mode1A:
+                    mode1APids.Remove((byte)(oldAddress & 0xFF));
+                    mode1APids[(byte)(pid.Address & 0xFF)] = pid;
+                    break;
+                case PidMode.Mode22:
+                    mode22Pids.Remove((ushort)(oldAddress & 0xFFFF));
+                    mode22Pids[(ushort)(pid.Address & 0xFFFF)] = pid;
+                    break;
+                case PidMode.Mode2D:
+                    mode2DPids.Remove(oldAddress);
+                    mode2DPids[pid.Address] = pid;
+                    break;
+            }
+        }
+        PidsChanged?.Invoke(this, EventArgs.Empty);
     }
-
-    /// <summary>Insert or replace a Mode 1 PID. Key is <c>(byte)(pid.Address &amp; 0xFF)</c>;
-    /// the editor stores the PID id in the same Address field for visual
-    /// consistency with the other modes.</summary>
-    public void SetMode1Pid(Pid pid)
-    {
-        byte key = (byte)(pid.Address & 0xFF);
-        lock (mode1PidsLock) mode1Pids[key] = pid;
-        Mode1PidsChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    public bool RemoveMode1Pid(byte pidId)
-    {
-        bool removed;
-        lock (mode1PidsLock) removed = mode1Pids.Remove(pidId);
-        if (removed) Mode1PidsChanged?.Invoke(this, EventArgs.Empty);
-        return removed;
-    }
-
-    /// <summary>Raised after a Mode 1 PID is added, replaced, removed, or the
-    /// set is cleared.</summary>
-    public event EventHandler? Mode1PidsChanged;
 
     /// <summary>
     /// Notifies subscribers that the PID list has changed without adding/removing.

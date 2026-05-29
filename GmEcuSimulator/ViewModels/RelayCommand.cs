@@ -10,7 +10,7 @@ public sealed class RelayCommand : ICommand
     private readonly Predicate<object?>? canExecute;
 
     public RelayCommand(Action execute, Func<bool>? canExecute = null)
-        : this(_ => execute(), canExecute == null ? null : (Predicate<object?>)(_ => canExecute())) { }
+        : this(_ => execute(), canExecute == null ? null : (_ => canExecute())) { }
 
     public RelayCommand(Action<object?> execute, Predicate<object?>? canExecute = null)
     {

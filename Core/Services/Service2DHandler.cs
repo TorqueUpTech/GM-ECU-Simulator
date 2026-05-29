@@ -1,8 +1,6 @@
 using Common.Protocol;
-using Common.Waveforms;
 using Core.Bus;
 using Core.Ecu;
-using Core.Transport;
 
 namespace Core.Services;
 
@@ -102,6 +100,7 @@ public static class Service2DHandler
             Scalar = existing.Scalar,
             Offset = existing.Offset,
             Unit = existing.Unit,
+            Signal = existing.Signal,   // inherit signal-backing so the alias reads live, not just the waveform
         };
         dyn.SetReplayWaveformFactory(existing.ReplayWaveformFactory);
         dyn.WaveformConfig = existing.WaveformConfig;

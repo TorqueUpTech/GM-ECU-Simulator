@@ -123,11 +123,11 @@ public static class Service31Handler
             uint start = ((uint)usdtPayload[4] << 24)
                        | ((uint)usdtPayload[5] << 16)
                        | ((uint)usdtPayload[6] << 8)
-                       |  (uint)usdtPayload[7];
+                       | usdtPayload[7];
             uint size  = ((uint)usdtPayload[8] << 24)
                        | ((uint)usdtPayload[9] << 16)
                        | ((uint)usdtPayload[10] << 8)
-                       |  (uint)usdtPayload[11];
+                       | usdtPayload[11];
 
             if (size > 0 && size <= MaxFlashEraseRegionBytes
                 && (long)start + size <= 0x1_0000_0000L)
@@ -158,11 +158,11 @@ public static class Service31Handler
             uint start = ((uint)usdtPayload[4] << 24)
                        | ((uint)usdtPayload[5] << 16)
                        | ((uint)usdtPayload[6] << 8)
-                       |  (uint)usdtPayload[7];
+                       | usdtPayload[7];
             uint size  = ((uint)usdtPayload[8] << 24)
                        | ((uint)usdtPayload[9] << 16)
                        | ((uint)usdtPayload[10] << 8)
-                       |  (uint)usdtPayload[11];
+                       | usdtPayload[11];
 
             ushort crc = ComputeCheckMemoryCrc(node, start, size, ch);
             node.State.Fragmenter.EnqueueResponse(ch, node.UsdtResponseCanId,

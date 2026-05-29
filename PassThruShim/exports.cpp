@@ -113,6 +113,25 @@ static void OpenLogFileIfNeeded()
     fflush(g_logFile);
 }
 
+// Called from dllmain.cpp on DLL_PROCESS_ATTACH. Forces the file log to open
+// even when the host never reaches PassThruOpen, so the mere presence of a
+// fresh shim_*.log proves the DLL was LoadLibrary'd by some host process.
+// Without this the file is created lazily on the first DebugLog() call, and
+// a host that filters us out at enumeration time leaves no on-disk trace.
+extern "C" void Shim_LogAttach()
+{
+    std::lock_guard<std::mutex> lock(g_logFileMutex);
+    OpenLogFileIfNeeded();
+    if (g_logFile)
+    {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fprintf(g_logFile, "[%02u:%02u:%02u.%03u] DLL_PROCESS_ATTACH\r\n",
+                st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+        fflush(g_logFile);
+    }
+}
+
 // Called from dllmain.cpp on DLL_PROCESS_DETACH. Safe to call even when the
 // file was never opened. Not declared static so DllMain can forward-declare
 // it without a separate header.

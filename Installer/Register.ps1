@@ -97,11 +97,35 @@ function Set-Device([string]$key, [string]$shimPath) {
     if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
     Set-ItemProperty -Path $key -Name "Name"               -Value "GM ECU Simulator"
     Set-ItemProperty -Path $key -Name "Vendor"             -Value "hjtrbo"
-    Set-ItemProperty -Path $key -Name "ConfigApplication"  -Value $exe
+    # ConfigApplication is left empty intentionally. ForScan (v2.4.8 beta,
+    # confirmed via ProcMon on 2026-05-20) reads registry values via
+    # RegEnumValue in declared order and silently abandons the entry when
+    # ConfigApplication exceeds ~128 wchars - the simulator's source-tree
+    # exe path is 128+ chars and tripped the limit, so ForScan never read
+    # FunctionLibrary and never called LoadLibrary on the shim. Hosts that
+    # *do* use ConfigApplication (a "Configure..." button on the device
+    # entry) just won't show one for us; the simulator UI is what they
+    # would have launched anyway, and the user already has it open. The
+    # peer entries (Tactrix OpenPort) ship with this value blank too, so
+    # we're in good company.
+    Set-ItemProperty -Path $key -Name "ConfigApplication"  -Value ""
     Set-ItemProperty -Path $key -Name "FunctionLibrary"    -Value $shimPath
-    Set-ItemProperty -Path $key -Name "ProtocolsSupported" -Value "CAN,ISO15765"
+    # ProtocolsSupported is the legacy comma-separated string; all the
+    # peer entries on this machine (MDI, Drew, Tactrix) leave it blank and
+    # use the per-protocol DWORDs below as the authoritative advertisement.
+    # Matching that shape is what gets us past ForScan's enumeration filter
+    # alongside the empty ConfigApplication above.
+    Set-ItemProperty -Path $key -Name "ProtocolsSupported" -Value ""
     Set-ItemProperty -Path $key -Name "CAN"                -Value 1 -Type DWord
     Set-ItemProperty -Path $key -Name "ISO15765"           -Value 1 -Type DWord
+    # Classic protocols we do not support, but explicitly zero. Some hosts
+    # use "key present at all" as a coarse "is this a real v04.04 entry"
+    # filter; absence and 0 are semantically equivalent per spec but cheap
+    # to write defensively.
+    Set-ItemProperty -Path $key -Name "J1850VPW"           -Value 0 -Type DWord
+    Set-ItemProperty -Path $key -Name "J1850PWM"           -Value 0 -Type DWord
+    Set-ItemProperty -Path $key -Name "ISO9141"            -Value 0 -Type DWord
+    Set-ItemProperty -Path $key -Name "ISO14230"           -Value 0 -Type DWord
     Write-Host "  Registered: $key -> $shimPath"
 }
 

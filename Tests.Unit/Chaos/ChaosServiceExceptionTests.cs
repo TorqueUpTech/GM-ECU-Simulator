@@ -1,7 +1,6 @@
 using Common.PassThru;
 using Common.Protocol;
 using Core.Bus;
-using Core.Ecu;
 using Core.Security.Modules;
 using EcuSimulator.Tests.TestHelpers;
 using Xunit;

@@ -125,6 +125,17 @@ public static class Service34Handler
             return false;
         }
 
+        // Bracket close: if a prior $34/$36 stream already ran in this
+        // session, the next $34 marks its completion. Sniff the assembled
+        // bracket for PowerPC code BEFORE the realloc below blows it away;
+        // if it looks like a kernel, dump a tagged copy. No-op when capture
+        // dir isn't set or sniffer returns negative.
+        if (node.State.DownloadActive && node.State.DownloadBuffer is not null
+            && ch.Bus is not null)
+        {
+            BootloaderCaptureWriter.WriteCompletedBracketIfKernel(node, ch.Bus, "next34");
+        }
+
         // Allocate a fresh sink buffer for this $34. Each $36 writes its own
         // .bin immediately, so $34 is purely a precondition + buffer-reset
         // gate. Session timestamp + sequence counter for capture filenames

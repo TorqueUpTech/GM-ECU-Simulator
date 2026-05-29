@@ -100,7 +100,11 @@
                         </Style>
                     </DataGridTextColumn.ElementStyle>
                     <DataGridTextColumn.EditingElementStyle>
-                        <Style TargetType="TextBox">
+                        <!-- Material popup-style editor (floating textbox with
+                             underline). Style defined in GMThemeManager's
+                             DataGrid theme via the MaterialDesignThemes merge. -->
+                        <Style TargetType="TextBox"
+                               BasedOn="{StaticResource MaterialDesignDataGridTextColumnPopupEditingStyle}">
                             <Setter Property="FontFamily" Value="Consolas"/>
                         </Style>
                     </DataGridTextColumn.EditingElementStyle>

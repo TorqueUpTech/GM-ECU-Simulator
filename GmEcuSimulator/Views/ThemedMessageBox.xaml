@@ -8,9 +8,17 @@
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         ResizeMode="NoResize"
-        Style="{StaticResource Window.Dialog}">
+        Style="{StaticResource Window.Dialog}"
+        Background="{DynamicResource Chrome.BgBrush}">
 
-    <DockPanel LastChildFill="True">
+    <!-- Paint the whole DockPanel with the chrome surface so any layout slack
+         (WindowChrome resize borders, SizeToContent rounding, the Material
+         BundledTheme bleed seen elsewhere) doesn't expose the Window's
+         Bg.BaseBrush underneath - that brush reads as near-black against the
+         lighter chrome and produced the "black band" the user saw beneath
+         the footer buttons. -->
+    <DockPanel LastChildFill="True"
+               Background="{DynamicResource Chrome.BgBrush}">
 
         <!-- Custom titlebar (matches the main shell) -->
         <Grid DockPanel.Dock="Top" Background="{DynamicResource Chrome.GradientBrush}" Height="32">
@@ -47,7 +55,13 @@
                         HorizontalAlignment="Right"/>
         </Border>
 
-        <!-- Body: severity glyph + message text -->
+        <!-- Body: severity glyph + message text.
+             Painted with Chrome.BgBrush (same as the footer) so the body
+             reads as one surface with the chrome above and below. Without
+             this, the body fell back to the Window's Bg.BaseBrush which in
+             most palettes is markedly darker than the chrome, producing a
+             visible "black band" between the titlebar and the message. -->
+        <Grid Background="{DynamicResource Chrome.BgBrush}">
         <Grid Margin="18,16,18,16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="IconColumn" Width="Auto"/>
@@ -80,6 +94,7 @@
                        Foreground="{DynamicResource Text.PrimaryBrush}"
                        TextWrapping="Wrap"
                        VerticalAlignment="Center"/>
+        </Grid>
         </Grid>
     </DockPanel>
 </Window>

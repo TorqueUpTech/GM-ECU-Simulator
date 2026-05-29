@@ -1,6 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace GmEcuSimulator.Views;
 
@@ -19,6 +19,33 @@ public sealed partial class ThemedMessageBox : Window
         MessageBlock.Text = message;
         ApplySeverity(image);
         BuildButtons(buttons);
+
+        // SizeToContent + WindowChrome leaves residual width AND height in
+        // WPF: the chrome reserves space before the layout engine has
+        // measured the body, and SizeToContent doesn't re-shrink the window
+        // once the content's true desired size is known - the dialog ends
+        // up noticeably larger than its visible content, exposing the
+        // Window base surface (in some palettes near-black) as a band
+        // beneath the footer and to the right of the title bar. Toggling
+        // SizeToContent off then back on forces a fresh measure with the
+        // chrome already applied, but the toggle has to run AFTER WPF's
+        // first render pass; Loaded fires too early - chrome insets aren't
+        // finalised yet, so the toggle re-measures against stale values
+        // and the slack survives. ContentRendered + Dispatcher at
+        // ContextIdle defers the toggle until every measure/arrange/render
+        // pass for the initial show is complete, at which point the
+        // re-measure gets the exact desired size and the window snaps to
+        // it.
+        ContentRendered += (_, _) =>
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                SizeToContent = SizeToContent.Manual;
+                InvalidateMeasure();
+                UpdateLayout();
+                SizeToContent = SizeToContent.WidthAndHeight;
+            }), DispatcherPriority.ContextIdle);
+        };
     }
 
     /// <summary>

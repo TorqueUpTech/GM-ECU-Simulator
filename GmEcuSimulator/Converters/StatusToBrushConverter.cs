@@ -17,17 +17,22 @@ public sealed class StatusToBrushConverter : IValueConverter
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         var s = value as string ?? string.Empty;
-        // Order matters: "Locked out" must beat "Locked", and "Not registered"
-        // must beat "Registered". Check the more-specific prefixes first.
+        // Order matters: "Locked out" must beat "Locked", and any "Not ..."
+        // negative state must beat the positive prefix it negates. Check the
+        // more-specific patterns first. Both the J2534 pill ("Shim Registered"
+        // / "Shim Not Registered") and the ECU security pill ("Locked",
+        // "Unlocked", "Locked out - ...") feed through here, so the contains-
+        // based checks below have to handle either spelling.
         var key =
-            s.StartsWith("Locked out", StringComparison.OrdinalIgnoreCase)  ? "Status.ErrorBrush"
-          : s.StartsWith("Unlocked", StringComparison.OrdinalIgnoreCase)    ? "Status.SuccessBrush"
-          : s.StartsWith("Locked", StringComparison.OrdinalIgnoreCase)      ? "Status.WarningBrush"
-          : s.StartsWith("Not", StringComparison.OrdinalIgnoreCase)         ? "Status.WarningBrush"
-          : s.StartsWith("Registered", StringComparison.OrdinalIgnoreCase)  ? "Status.SuccessBrush"
-          : s.StartsWith("OK", StringComparison.OrdinalIgnoreCase)          ? "Status.SuccessBrush"
-          : s.Contains("failed", StringComparison.OrdinalIgnoreCase)        ? "Status.ErrorBrush"
-          :                                                                   "Text.TertiaryBrush";
+            s.Contains("Locked out", StringComparison.OrdinalIgnoreCase) ? "Status.ErrorBrush"
+          : s.Contains("Unlocked",   StringComparison.OrdinalIgnoreCase) ? "Status.SuccessBrush"
+          : s.Contains("Fault",      StringComparison.OrdinalIgnoreCase) ? "Status.WarningBrush"
+          : s.Contains("Not",        StringComparison.OrdinalIgnoreCase) ? "Status.WarningBrush"
+          : s.Contains("Locked",     StringComparison.OrdinalIgnoreCase) ? "Status.WarningBrush"
+          : s.Contains("Registered", StringComparison.OrdinalIgnoreCase) ? "Status.SuccessBrush"
+          : s.Contains("OK",         StringComparison.OrdinalIgnoreCase) ? "Status.SuccessBrush"
+          : s.Contains("failed",     StringComparison.OrdinalIgnoreCase) ? "Status.ErrorBrush"
+          :                                                                "Text.TertiaryBrush";
         return (Application.Current?.Resources[key] as Brush) ?? Brushes.Gray;
     }
 

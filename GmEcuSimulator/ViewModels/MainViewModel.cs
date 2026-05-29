@@ -1,20 +1,22 @@
-using System.Collections.ObjectModel;
-using System.ComponentModel;
-using System.Diagnostics;
-using System.IO;
-using System.Reflection;
-using System.Windows;
 using Common;
 using Common.Persistence;
+using Common.Protocol;
 using Core.Bus;
 using Core.Dps;
 using Core.Ecu;
+using Core.Identification;
 using Core.Persistence;
 using Core.Replay;
 using GmEcuSimulator.Views;
 using Microsoft.Win32;
 using Shim;
 using Shim.Ipc;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Reflection;
+using System.Windows;
 
 namespace GmEcuSimulator.ViewModels;
 
@@ -24,6 +26,25 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     private readonly BinReplayCoordinator replay;
     private readonly NamedPipeServer pipeServer;
     public ObservableCollection<EcuViewModel> Ecus { get; } = new();
+
+    // The ordered set of PIDs pinned to the main window's live-tile dashboard.
+    // Cross-ECU (each tile names its owning ECU), so it lives here rather than
+    // on any one EcuViewModel. Persisted per-config as SimulatorConfig.LiveTiles
+    // and re-resolved against the freshly-built ECUs on every load / rebuild.
+    public ObservableCollection<PidTileViewModel> LiveTiles { get; } = new();
+
+    // Tile descriptors parked by a config-load path (startup / File>Open /
+    // Import / mode-switch) for the next Rebuild() to resolve against the new
+    // ECU set. Null means "no fresh config to apply" - Rebuild then reconciles
+    // the existing tiles in place instead (rebinding to rebuilt PID instances,
+    // dropping orphans).
+    private List<LiveTileDto>? pendingTileDescriptors;
+
+    private bool pickerOpen;
+    private EcuViewModel? pickerSelectedEcu;
+    private string pickerFilterText = "";
+    private PickerModeOption pickerSelectedMode = AllPickerModes[0];
+
     private EcuViewModel? selectedEcu;
     private EcuViewModel? setupSelectedEcu;
     private string? currentFilePath;
@@ -60,9 +81,8 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public RelayCommand OpenCommand { get; }
     public RelayCommand SaveCommand { get; }
     public RelayCommand SaveAsCommand { get; }
-    public RelayCommand ImportCommand { get; }
-    public RelayCommand ExportCommand { get; }
     public RelayCommand AddEcuCommand { get; }
+    public RelayCommand AddBlankEcuCommand { get; }
     public RelayCommand RemoveEcuCommand { get; }
     public RelayCommand AddPidCommand { get; }
     public RelayCommand RemovePidCommand { get; }
@@ -72,6 +92,10 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public RelayCommand ConfigurePidsCommand { get; }
     public RelayCommand SavePidsCommand { get; }
     public RelayCommand LoadPidsCommand { get; }
+    public RelayCommand SaveEcuCommand { get; }
+    public RelayCommand LoadEcuCommand { get; }
+    public RelayCommand SaveSetupEcuCommand { get; }
+    public RelayCommand RemoveSetupEcuCommand { get; }
     public RelayCommand ResetStateCommand { get; }
     public RelayCommand RegisterJ2534Command { get; }
     public RelayCommand UnregisterJ2534Command { get; }
@@ -79,19 +103,17 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public RelayCommand ResetIpcPipeCommand { get; }
     public RelayCommand PrimeFromArchiveCommand { get; }
     public RelayCommand ClearPrimeArchiveCommand { get; }
+    public RelayCommand AddTileCommand { get; }
 
     /// <summary>
-    /// All five top-level modes in declaration order. Bound to the mode
-    /// selector ComboBox at the top of the main window.
+    /// All top-level modes in declaration order. Bound to the mode selector
+    /// ComboBox at the top of the main window.
     /// </summary>
     public IReadOnlyList<AppMode> AvailableModes { get; } = new[]
     {
         AppMode.EcuSimulator,
         AppMode.DpsWrite,
         AppMode.DpsRead,
-        AppMode.FlashToolWrite,
-        AppMode.FlashToolRead,
-        AppMode.Mode1,
     };
 
     public MainViewModel(VirtualBus bus, BinReplayCoordinator replay, NamedPipeServer pipeServer)
@@ -124,6 +146,22 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         // actually starts if the user had the toggle on at last shutdown.
         IsFileLoggingEnabled = appSettings.LogToFile;
 
+        // Seed the live-tile dashboard from the per-mode config file that App
+        // already applied to the bus on startup - same file, so the descriptors
+        // resolve against the ECUs the upcoming Rebuild() builds. Guarded: DPS
+        // modes don't persist, the file may be absent, or it may be a pre-v17
+        // config with no LiveTiles - any of which just means an empty dashboard.
+        try
+        {
+            if (currentMode.PersistsConfig())
+            {
+                var tilePath = ConfigStore.PathForMode(currentMode);
+                if (File.Exists(tilePath))
+                    pendingTileDescriptors = ConfigStore.Load(tilePath).LiveTiles;
+            }
+        }
+        catch { /* corrupt / unreadable config -> empty dashboard */ }
+
         // Rebuild after currentMode is set so ECUs inherit the right
         // visibility flags from the get-go.
         Rebuild();
@@ -132,9 +170,8 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         OpenCommand                  = new RelayCommand(Open);
         SaveCommand                  = new RelayCommand(Save);
         SaveAsCommand                = new RelayCommand(SaveAs);
-        ImportCommand                = new RelayCommand(Import);
-        ExportCommand                = new RelayCommand(Export);
         AddEcuCommand                = new RelayCommand(AddEcu, CanAddEcu);
+        AddBlankEcuCommand           = new RelayCommand(AddBlankEcu, CanAddEcu);
         RemoveEcuCommand             = new RelayCommand(RemoveEcu, () => SelectedEcu != null);
         AddPidCommand                = new RelayCommand(AddPid,    () => SelectedEcu != null);
         RemovePidCommand             = new RelayCommand(RemovePid, () => SelectedEcu?.SelectedPid != null);
@@ -144,6 +181,10 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         ConfigurePidsCommand         = new RelayCommand(ConfigurePids, CanConfigurePids);
         SavePidsCommand              = new RelayCommand(SaveSetupPids, () => SetupSelectedEcu != null && SetupSelectedEcu.Pids.Count > 0);
         LoadPidsCommand              = new RelayCommand(LoadSetupPids, () => SetupSelectedEcu != null);
+        SaveEcuCommand               = new RelayCommand(SaveEcu, () => SelectedEcu != null);
+        LoadEcuCommand               = new RelayCommand(LoadEcu, CanAddEcu);
+        SaveSetupEcuCommand          = new RelayCommand(SaveSetupEcu,   () => SetupSelectedEcu != null);
+        RemoveSetupEcuCommand        = new RelayCommand(RemoveSetupEcu, () => SetupSelectedEcu != null);
         ResetStateCommand            = new RelayCommand(ResetState, () => Ecus.Count > 0);
         RegisterJ2534Command         = new RelayCommand(RegisterJ2534,         () => !j2534Busy);
         UnregisterJ2534Command       = new RelayCommand(UnregisterJ2534,       () => !j2534Busy);
@@ -151,6 +192,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         ResetIpcPipeCommand           = new RelayCommand(ResetIpcPipe,          () => !j2534Busy);
         PrimeFromArchiveCommand       = new RelayCommand(PrimeFromArchive);
         ClearPrimeArchiveCommand      = new RelayCommand(ClearPrimeArchive, () => !string.IsNullOrEmpty(primeArchivePath));
+        AddTileCommand                = new RelayCommand(AddTile, p => p is PidPickerEntry);
 
         RefreshJ2534Status();
     }
@@ -312,6 +354,11 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         appSettings.Mode = newMode;
         try { appSettings.Save(); } catch { /* persistence best-effort */ }
 
+        // Switching modes resets the dashboard to the new mode's saved tiles
+        // (empty unless a config below carries some) rather than carrying the
+        // old mode's tiles forward.
+        pendingTileDescriptors = new List<LiveTileDto>();
+
         // Load the new mode's config if it persists and a file is present.
         try
         {
@@ -322,6 +369,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
                 {
                     var cfg = ConfigStore.Load(path);
                     ConfigStore.ApplyTo(cfg, bus);
+                    pendingTileDescriptors = cfg.LiveTiles;
                     // Priming is DPS-only. If a persisted non-DPS config carries
                     // a stale primeArchivePath (e.g. from a pre-gating session
                     // where a user primed into ECU Simulator mode), drop it on
@@ -333,10 +381,6 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
                 else if (newMode == AppMode.EcuSimulator)
                 {
                     DefaultEcuConfig.ApplyIfEmpty(bus);
-                }
-                else if (newMode == AppMode.Mode1)
-                {
-                    DefaultMode1Config.ApplyIfEmpty(bus);
                 }
             }
         }
@@ -353,8 +397,204 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         var cfg = priorSnapshot ?? ConfigStore.Snapshot(bus, replay: replay);
         cfg.PrimeArchivePath = PrimeArchivePath;
         cfg.DonorBinPath = donorBinPath;
+        cfg.LiveTiles = SnapshotTileDescriptors();
         return cfg;
     }
+
+    // ---------------- Live-tile dashboard ----------------
+
+    // Two-way bound to the picker Popup's IsOpen. Opening it seeds the source
+    // ECU (the inspector's selection, or the first ECU) and clears the filter
+    // so the candidate list starts fresh.
+    public bool PickerOpen
+    {
+        get => pickerOpen;
+        set
+        {
+            if (!SetField(ref pickerOpen, value)) return;
+            if (value)
+            {
+                pickerFilterText = "";
+                pickerSelectedEcu = SelectedEcu ?? Ecus.FirstOrDefault();
+                pickerSelectedMode = AllPickerModes[0];   // default filter: Mode $01
+                OnPropertyChanged(nameof(PickerFilterText));
+                OnPropertyChanged(nameof(PickerSelectedEcu));
+                OnPropertyChanged(nameof(PickerSelectedMode));
+                OnPropertyChanged(nameof(ShowsPickerEcuDropdown));
+                OnPropertyChanged(nameof(PickerCandidates));
+            }
+        }
+    }
+
+    // The ECU the picker draws its candidate PID list from. The dropdown that
+    // sets this only shows when more than one ECU is configured.
+    public EcuViewModel? PickerSelectedEcu
+    {
+        get => pickerSelectedEcu;
+        set
+        {
+            if (SetField(ref pickerSelectedEcu, value))
+                OnPropertyChanged(nameof(PickerCandidates));
+        }
+    }
+
+    // Case-insensitive filter applied to the candidate list, matched against
+    // both the PID id (AddressHex) and the friendly name.
+    public string PickerFilterText
+    {
+        get => pickerFilterText;
+        set
+        {
+            if (SetField(ref pickerFilterText, value))
+                OnPropertyChanged(nameof(PickerCandidates));
+        }
+    }
+
+    public bool ShowsPickerEcuDropdown => Ecus.Count > 1;
+
+    // The modes the picker can filter by. $01 (OBD-II) is the built-in J1979
+    // projection; the rest are editable PID-row modes. Order = dropdown order.
+    private static readonly PickerModeOption[] AllPickerModes =
+    {
+        new(PickerModeFilter.Obd2,   "Mode $01 (OBD-II)"),
+        new(PickerModeFilter.Mode1A, "Mode $1A (Identity)"),
+        new(PickerModeFilter.Mode22, "Mode $22"),
+        new(PickerModeFilter.Mode2D, "Mode $2D"),
+    };
+
+    public IReadOnlyList<PickerModeOption> PickerModes => AllPickerModes;
+
+    // The mode the picker list is filtered to. Defaults to (and resets on each
+    // open to) Mode $01.
+    public PickerModeOption PickerSelectedMode
+    {
+        get => pickerSelectedMode;
+        set
+        {
+            if (SetField(ref pickerSelectedMode, value))
+                OnPropertyChanged(nameof(PickerCandidates));
+        }
+    }
+
+    // The "<pid id> - <friendly name>" candidates for the picker list, scoped
+    // to the selected source ECU and mode, then filtered by the text box. $01
+    // (OBD-II) PIDs aren't Pid rows - they're the built-in J1979 projection -
+    // so that mode draws from Obd2Pids and only lists ones the ECU advertises
+    // (Supported); the other modes draw the matching rows from Pids.
+    public IEnumerable<PidPickerEntry> PickerCandidates
+    {
+        get
+        {
+            var ecu = pickerSelectedEcu;
+            if (ecu is null) yield break;
+            var filter = (pickerFilterText ?? "").Trim();
+
+            if (pickerSelectedMode.Filter == PickerModeFilter.Obd2)
+            {
+                foreach (var row in ecu.Obd2Pids)
+                {
+                    if (!row.Supported) continue;
+                    if (Matches(filter, row.PidHex, row.Name))
+                        yield return new PidPickerEntry(ecu, null, row, $"{row.PidHex} - {row.Name}");
+                }
+                yield break;
+            }
+
+            var mode = pickerSelectedMode.Filter switch
+            {
+                PickerModeFilter.Mode1A => PidMode.Mode1A,
+                PickerModeFilter.Mode2D => PidMode.Mode2D,
+                _                       => PidMode.Mode22,
+            };
+            foreach (var pid in ecu.Pids)
+            {
+                if (pid.Model.Mode != mode) continue;
+                if (Matches(filter, pid.AddressHex, pid.Name))
+                    yield return new PidPickerEntry(ecu, pid, null, $"{pid.AddressHex} - {pid.Name}");
+            }
+        }
+    }
+
+    private static bool Matches(string filter, string id, string name)
+        => filter.Length == 0
+        || id.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0
+        || name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+
+    // Picker selection -> append a tile for that PID and close the popup.
+    private void AddTile(object? parameter)
+    {
+        if (parameter is not PidPickerEntry entry) return;
+        var tile = entry.Pid is not null
+            ? new PidTileViewModel(entry.Ecu, entry.Pid, RemoveTile)
+            : new PidTileViewModel(entry.Ecu, entry.Obd2!, RemoveTile);
+        LiveTiles.Add(tile);
+        PickerOpen = false;
+        AutoSave();
+    }
+
+    // Right-click -> Delete on a tile.
+    public void RemoveTile(PidTileViewModel tile)
+    {
+        if (LiveTiles.Remove(tile)) { tile.Unhook(); AutoSave(); }
+    }
+
+    // Drag-reorder commit from the code-behind. Bounds-checked so a stale drop
+    // index can't throw.
+    public void MoveTile(int from, int to)
+    {
+        if (from < 0 || from >= LiveTiles.Count) return;
+        to = Math.Clamp(to, 0, LiveTiles.Count - 1);
+        if (from == to) return;
+        LiveTiles.Move(from, to);
+        AutoSave();
+    }
+
+    // Find the live tile target for a persisted descriptor. Pid tiles resolve
+    // ECU by name then PID by mode + address; $01 tiles resolve ECU by name
+    // then the J1979 row by $01 PID id. Null if the target is gone (an orphan).
+    private PidTileViewModel? ResolveTile(LiveTileDto d)
+    {
+        var ecu = Ecus.FirstOrDefault(e => e.Name == d.Ecu);
+        if (ecu is null) return null;
+        if (d.Source == LiveTileSource.Obd2)
+        {
+            var row = ecu.Obd2Pids.FirstOrDefault(r => r.Pid == (byte)d.Address);
+            return row is not null ? new PidTileViewModel(ecu, row, RemoveTile) : null;
+        }
+        var pid = ecu.Pids.FirstOrDefault(p => p.Model.Mode == d.Mode && p.Model.Address == d.Address);
+        return pid is not null ? new PidTileViewModel(ecu, pid, RemoveTile) : null;
+    }
+
+    // Rebuild LiveTiles from a descriptor list, dropping any that don't resolve.
+    // Order is preserved. Existing tiles are unhooked first so they don't dangle
+    // off the source VMs.
+    private void LoadTilesFromDescriptors(IEnumerable<LiveTileDto> descriptors)
+    {
+        foreach (var t in LiveTiles) t.Unhook();
+        LiveTiles.Clear();
+        foreach (var d in descriptors)
+        {
+            var tile = ResolveTile(d);
+            if (tile is not null) LiveTiles.Add(tile);
+        }
+    }
+
+    // Re-resolve the current tiles against the live ECU set. Re-binds tiles
+    // whose source VM instance was replaced (Load PIDs) and drops orphans.
+    private void ReconcileTiles() => LoadTilesFromDescriptors(SnapshotTileDescriptors());
+
+    // Derive persistable descriptors from the live tile refs - reads the
+    // current mode/address so an in-place edit in the editor is captured.
+    private List<LiveTileDto> SnapshotTileDescriptors()
+        => LiveTiles.Select(t => t.Obd2 is { } row
+            ? new LiveTileDto { Source = LiveTileSource.Obd2, Ecu = t.Ecu.Name, Address = row.Pid }
+            : new LiveTileDto
+            {
+                Source = LiveTileSource.Pid,
+                Ecu = t.Ecu.Name,
+                Mode = t.Pid!.Model.Mode,
+                Address = t.Pid!.Model.Address,
+            }).ToList();
 
     // Independent ECU selection for the setup window's PID/waveform panes.
     // The main window's Selected ECU inspector continues to track SelectedEcu;
@@ -598,7 +838,6 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         OnPropertyChanged(nameof(ShowsGlitchTab));
         OnPropertyChanged(nameof(ShowsCaptureTab));
         OnPropertyChanged(nameof(ShowsPrimeMenu));
-        OnPropertyChanged(nameof(ShowsSecurityModuleField));
         OnPropertyChanged(nameof(ShowsSecurityModuleReadOnly));
         OnPropertyChanged(nameof(IsEcuSimulatorMode));
         OnPropertyChanged(nameof(ShowsPidLiveGrid));
@@ -606,49 +845,55 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         OnPropertyChanged(nameof(ShowsSecurityPill));
         OnPropertyChanged(nameof(FormRowMaxHeight));
         OnPropertyChanged(nameof(PidRowMinHeight));
+
+        // Reset the picker's source-ECU selection (the old instance was just
+        // discarded) and re-evaluate the dashboard. A fresh config load hands
+        // us pendingTileDescriptors to resolve; otherwise we reconcile the
+        // existing tiles against the rebuilt ECU instances - rebinding tiles
+        // whose PidViewModel was replaced (Load PIDs) and dropping orphans.
+        pickerSelectedEcu = null;
+        OnPropertyChanged(nameof(PickerSelectedEcu));
+        OnPropertyChanged(nameof(ShowsPickerEcuDropdown));
+        OnPropertyChanged(nameof(PickerCandidates));
+        if (pendingTileDescriptors is { } pending)
+        {
+            pendingTileDescriptors = null;
+            LoadTilesFromDescriptors(pending);
+        }
+        else
+        {
+            ReconcileTiles();
+        }
+
         System.Windows.Input.CommandManager.InvalidateRequerySuggested();
     }
 
     /// <summary>
     /// Convenience predicate: modes whose inspector behaves like the ECU
     /// editor (PID grid visible, Configure PIDs button, no programming-only
-    /// fields). Currently ECU Simulator + Mode 1 (OBD-II Mode $01) - both
-    /// drive synthesised PID responses from waveforms.
+    /// fields). Currently ECU Simulator only - drives synthesised PID
+    /// responses from waveforms; supports Mode22 / Mode2D / Mode1A / Mode1
+    /// PIDs side-by-side via the per-PID PidMode dropdown.
     /// </summary>
-    private bool IsPidEditorMode => currentMode is AppMode.EcuSimulator or AppMode.Mode1;
+    private bool IsPidEditorMode => currentMode is AppMode.EcuSimulator;
 
     /// <summary>Bin Replay tab shows in PID-editor modes.</summary>
     public bool ShowsBinReplayTab => IsPidEditorMode;
     /// <summary>Glitch tab shows in PID-editor modes.</summary>
     public bool ShowsGlitchTab    => IsPidEditorMode;
-    /// <summary>Captures tab shows in DPS and Flash Tool modes.</summary>
+    /// <summary>Captures tab shows in DPS modes.</summary>
     public bool ShowsCaptureTab
-        => currentMode is AppMode.DpsWrite or AppMode.DpsRead
-                       or AppMode.FlashToolWrite or AppMode.FlashToolRead;
+        => currentMode is AppMode.DpsWrite or AppMode.DpsRead;
     /// <summary>
     /// Prime menu (Prime from DPS archive / Clear primed archive) is DPS-only.
     /// Priming creates a persona at $7E0 from a DPS programming archive, which
     /// only makes sense in a single-ECU DPS session - never in the multi-ECU
-    /// editor (ECU Simulator) or in Flash Tool readback modes. Hiding the menu
-    /// in those modes prevents a stray prime from corrupting the persisted
-    /// config file with a path that would resurrect a "removed" ECU on next
-    /// launch.
+    /// editor (ECU Simulator). Hiding the menu in those modes prevents a stray
+    /// prime from corrupting the persisted config file with a path that would
+    /// resurrect a "removed" ECU on next launch.
     /// </summary>
     public bool ShowsPrimeMenu
         => currentMode is AppMode.DpsWrite or AppMode.DpsRead;
-
-    /// <summary>
-    /// Per-ECU security-module dropdown in the inspector. Shown only in the
-    /// Flash Tool modes. Hidden in DPS modes because the security module is
-    /// owned by the Prime Wizard there (chosen from the archive's algo
-    /// metadata, edited on Page 3), and the inspector dropdown would let the
-    /// user clobber that choice mid-session. Hidden in ECU Simulator mode
-    /// because the user-facing simulator persona doesn't depend on $27 key
-    /// math; the field clutters the inspector without driving any behaviour
-    /// users exercise from that mode.
-    /// </summary>
-    public bool ShowsSecurityModuleField
-        => currentMode is AppMode.FlashToolWrite or AppMode.FlashToolRead;
 
     /// <summary>
     /// Read-only display of the per-ECU security module in DPS Write / DPS Read
@@ -662,24 +907,21 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     /// <summary>
     /// Visibility gate for PID-editor-mode inspector actions (e.g. the per-
     /// ECU "Configure PIDs..." launcher). True in modes where the user
-    /// defines/edits PIDs directly (ECU Simulator + Mode 1). In DPS / Flash
-    /// Tool modes the Prime Wizard / archive owns the PID list so the
-    /// standalone editor isn't surfaced from the inspector. Property name
-    /// retained for XAML-binding stability - it now reads "is this a
-    /// PID-editor mode" rather than literally "is ECU Simulator".
+    /// defines/edits PIDs directly (ECU Simulator). In DPS modes
+    /// the Prime Wizard / archive owns the PID list so the standalone editor
+    /// isn't surfaced from the inspector. Property name retained for XAML-
+    /// binding stability - it now reads "is this a PID-editor mode" rather
+    /// than literally "is ECU Simulator".
     /// </summary>
     public bool IsEcuSimulatorMode => IsPidEditorMode;
 
     /// <summary>
     /// Visibility gate for the live PID DataGrid in the Selected ECU pane.
-    /// Visible in ECU Simulator + Mode 1. Hidden in:
-    /// - Flash Tool Write: flashing is a one-way data push, no PID responses.
-    /// - DPS Write / DPS Read: the primed PID set is an internal implementation
-    ///   detail of the prime pipeline (the solver synthesises bytecode-pinned
-    ///   $22 responses); surfacing it in the inspector implies user-tunable
-    ///   PIDs that don't exist in those modes.
-    /// - Flash Tool Read: same reasoning - PID list is not a user-facing
-    ///   configuration surface in flash-readback flows.
+    /// Visible in ECU Simulator. Hidden in DPS Write / DPS Read:
+    /// the primed PID set is an internal implementation detail of the prime
+    /// pipeline (the solver synthesises bytecode-pinned $22 responses);
+    /// surfacing it in the inspector implies user-tunable PIDs that don't
+    /// exist in those modes.
     /// </summary>
     public bool ShowsPidLiveGrid => IsPidEditorMode;
 
@@ -693,11 +935,11 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
 
     /// <summary>
     /// Visibility gate for the titlebar Security pill. Shown when an ECU is
-    /// selected (the normal case in ECU Simulator + Flash Tool modes) AND in
-    /// DPS Write / DPS Read modes regardless of selection - those modes are
-    /// about programming a single primed ECU, so the pill stays present even
-    /// before the user primes one. The TextBlock falls back to "No ECU primed"
-    /// when SelectedEcu is null.
+    /// selected (the normal case in ECU Simulator) AND in DPS Write / DPS Read
+    /// modes regardless of selection - those modes are about programming a
+    /// single primed ECU, so the pill stays present even before the user
+    /// primes one. The TextBlock falls back to "No ECU primed" when
+    /// SelectedEcu is null.
     /// </summary>
     public bool ShowsSecurityPill
         => SelectedEcu != null
@@ -716,16 +958,15 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     /// </summary>
     public double FormRowMaxHeight => currentMode switch
     {
-        AppMode.EcuSimulator or AppMode.Mode1 => 120.0,
-        AppMode.DpsWrite     or AppMode.DpsRead => 220.0,
-        _                                       => double.PositiveInfinity,
+        AppMode.EcuSimulator                => 120.0,
+        AppMode.DpsWrite or AppMode.DpsRead => 220.0,
+        _                                   => double.PositiveInfinity,
     };
 
     /// <summary>
     /// Floor for the PID row. 125 px = the PID Border header + DataGrid
     /// column-header row + 1 data row + padding. Set to 0 when the PID grid
-    /// is hidden (Flash Tool Write) so the row collapses cleanly with its
-    /// Collapsed child.
+    /// is hidden so the row collapses cleanly with its Collapsed child.
     /// </summary>
     public double PidRowMinHeight => ShowsPidLiveGrid ? 125.0 : 0.0;
 
@@ -750,6 +991,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         {
             var cfg = ConfigStore.Load(dlg.FileName);
             ConfigStore.ApplyTo(cfg, bus);
+            pendingTileDescriptors = cfg.LiveTiles;
             Rebuild();
             CurrentFilePath = dlg.FileName;
             // Restore PrimeArchivePath. Skip applying it inline - the user's
@@ -772,6 +1014,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             var cfg = ConfigStore.Snapshot(bus);
             cfg.PrimeArchivePath = PrimeArchivePath;
             cfg.DonorBinPath = donorBinPath;
+            cfg.LiveTiles = SnapshotTileDescriptors();
             ConfigStore.Save(cfg, CurrentFilePath);
             StatusText = $"Saved to {CurrentFilePath}";
         }
@@ -793,6 +1036,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             var cfg = ConfigStore.Snapshot(bus);
             cfg.PrimeArchivePath = PrimeArchivePath;
             cfg.DonorBinPath = donorBinPath;
+            cfg.LiveTiles = SnapshotTileDescriptors();
             ConfigStore.Save(cfg, dlg.FileName);
             CurrentFilePath = dlg.FileName;
             StatusText = $"Saved to {dlg.FileName}";
@@ -801,50 +1045,8 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         catch (Exception ex) { Error("Save failed", ex); }
     }
 
-    // Import is identical to Open but does not change CurrentFilePath -
-    // intent is "merge a profile in" without committing the working file.
-    // For now we replace the bus state; future work could MERGE instead.
-    private void Import()
-    {
-        var settings = AppSettings.Load();
-        var dlg = new OpenFileDialog
-        {
-            Filter = "JSON config (*.json)|*.json|All files|*.*",
-            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastConfigDir),
-        };
-        if (dlg.ShowDialog() != true) return;
-        try
-        {
-            var cfg = ConfigStore.Load(dlg.FileName);
-            ConfigStore.ApplyTo(cfg, bus);
-            Rebuild();
-            StatusText = $"Imported {Ecus.Count} ECU(s) from {dlg.FileName}";
-            PersistLastConfigDir(settings, dlg.FileName);
-        }
-        catch (Exception ex) { Error("Import failed", ex); }
-    }
-
-    private void Export()
-    {
-        var settings = AppSettings.Load();
-        var dlg = new SaveFileDialog
-        {
-            Filter = "JSON config (*.json)|*.json",
-            FileName = "ecu_config_export.json",
-            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastConfigDir),
-        };
-        if (dlg.ShowDialog() != true) return;
-        try
-        {
-            ConfigStore.Save(ConfigStore.Snapshot(bus), dlg.FileName);
-            StatusText = $"Exported to {dlg.FileName}";
-            PersistLastConfigDir(settings, dlg.FileName);
-        }
-        catch (Exception ex) { Error("Export failed", ex); }
-    }
-
-    // Shared helper for the four config dialogs (Open / SaveAs / Import /
-    // Export). Round-trips the parent of the chosen file into settings.json
+    // Shared helper for the config dialogs (Open / SaveAs). Round-trips the
+    // parent of the chosen file into settings.json
     // so the next session opens where the user was last working. Silent on
     // any I/O failure - the dialog already succeeded, persistence is a
     // nice-to-have.
@@ -856,19 +1058,32 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         settings.Save();
     }
 
+    // Primary "Add ECU" action. Adds a blank, fully-functional default ECU - in the signal-centric model that's a
+    // complete simulator ($01 J1979 catalogue + live signals + seeded identity). Importing real identity from a flash
+    // readback is a separate, explicit step in the editor's Advanced card ("Load identity from bin..."), not forced at
+    // creation time. DPS modes still short-circuit into the Prime wizard (the only path that yields a programming
+    // persona). Binds to the sidebar button via AddEcuCommand.
     private void AddEcu()
     {
-        // Single-ECU modes refuse the second add at the CanExecute layer;
-        // this guard catches a programmatic invocation that bypassed it.
+        // Single-ECU modes refuse the second add at the CanExecute layer; this guard catches a programmatic call.
         if (!CanAddEcu()) return;
 
-        // DPS modes don't add blank ECUs - the only path that yields a useful
-        // persona is the Prime wizard, so route Add straight into it.
         if (currentMode is AppMode.DpsWrite or AppMode.DpsRead)
         {
             PrimeFromArchive();
             return;
         }
+
+        AddBlankEcu();
+    }
+
+    // "Add blank ECU" - a fresh default ECU with no bin. In the signal-centric model this is already a complete
+    // simulator ($01 J1979 catalogue + live signals + seeded identity), so it's a first-class way to add an ECU, not
+    // just a dev shortcut. Reached two ways: the Tools -> Developer menu (AddBlankEcuCommand), and as the fallback
+    // when the sidebar Add's bin picker is cancelled (AddEcuFromBin above).
+    private void AddBlankEcu()
+    {
+        if (!CanAddEcu()) return;
 
         // Pick the next OBD-II 11-bit pair: request $7E0+, USDT response
         // $7E8+ (= req + $08), UUDT response $5E8+. This is the convention
@@ -880,24 +1095,61 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             Name = $"ECU{Ecus.Count + 1}",
             PhysicalRequestCanId = req,
             UsdtResponseCanId = (ushort)(req + 0x008),
-            UudtResponseCanId = (ushort)(req - 0x1F8),       // 0x7E0 → 0x5E8
+            UudtResponseCanId = (ushort)(req - 0x1F8),       // 0x7E0 -> 0x5E8
         };
+        // Seed the baseline identity (VIN, ...) and the curated live $22 set before the view-model is built so both
+        // the $1A and $22 editor sections are populated out of the box.
+        EcuIdentitySeeder.Seed(node);
+        EcuMode22Seeder.Seed(node);
         bus.AddNode(node);
         var vm = new EcuViewModel(node);
         vm.BindBus(bus);
         Ecus.Add(vm);
         SelectedEcu = vm;
-        StatusText = $"Added {node.Name}";
+        // Also focus the new ECU in the editor's independent selection so its PIDs and Name field target it
+        // immediately (the editor's "+" lands here; without this the editor keeps showing the previously-selected ECU).
+        SetupSelectedEcu = vm;
+        StatusText = $"Added {node.Name} (blank)";
         System.Windows.Input.CommandManager.InvalidateRequerySuggested();
     }
 
-    private void RemoveEcu()
+    private void RemoveEcu() => RemoveEcuCore(SelectedEcu);
+    private void RemoveSetupEcu() => RemoveEcuCore(SetupSelectedEcu);
+
+    // Shared remove-with-confirmation. Used by the main window's "-" button
+    // (operates on SelectedEcu) and by the PID Setup window's toolbar
+    // "Remove" button (operates on SetupSelectedEcu). Either selection that
+    // is non-null is removed from the shared bus + Ecus list, and the OPPOSITE
+    // selection is fixed up if it pointed at the same VM.
+    private void RemoveEcuCore(EcuViewModel? ecu)
     {
-        if (SelectedEcu == null) return;
-        var name = SelectedEcu.Name;
-        bus.RemoveNode(SelectedEcu.Model);
-        Ecus.Remove(SelectedEcu);
-        SelectedEcu = Ecus.FirstOrDefault();
+        if (ecu is null) return;
+        var name = ecu.Name;
+
+        // Confirm before removal - the ECU and its PIDs / waveforms are gone
+        // immediately and any pending edits in inspector textboxes are lost.
+        // ThemedMessageBox matches the rest of the app's chrome; using the
+        // OS MessageBox here would jar visually.
+        bool proceed = false;
+        ThemedMessageBox.Show(
+            Application.Current?.MainWindow,
+            "Remove ECU",
+            $"Remove ECU \"{name}\" from the bus? This discards its PIDs, " +
+            "waveforms, and any unsaved inspector edits.",
+            MessageBoxImage.Warning,
+            new ThemedDialogButton("Cancel", isCancel: true),
+            new ThemedDialogButton("Remove",
+                onClick: () => proceed = true,
+                isDefault: true));
+
+        if (!proceed) return;
+
+        bus.RemoveNode(ecu.Model);
+        Ecus.Remove(ecu);
+        // Keep both selections valid: whichever pointed at the removed VM
+        // falls back to the first remaining (or null on empty).
+        if (ReferenceEquals(SelectedEcu, ecu))      SelectedEcu      = Ecus.FirstOrDefault();
+        if (ReferenceEquals(SetupSelectedEcu, ecu)) SetupSelectedEcu = Ecus.FirstOrDefault();
         StatusText = $"Removed {name}";
         System.Windows.Input.CommandManager.InvalidateRequerySuggested();
     }
@@ -906,6 +1158,89 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     private void RemovePid() => SelectedEcu?.RemoveSelectedPid();
     private void AddSetupPid() => SetupSelectedEcu?.AddPid();
     private void RemoveSetupPid() => SetupSelectedEcu?.RemoveSelectedPid();
+
+    // Save / Load a single ECU as a *.ecu.json file. The DTO is the same shape
+    // ConfigSchema uses inside SimulatorConfig.Ecus (full EcuDto - CAN IDs,
+    // glitch, security module + config, PIDs, etc.) so an ECU saved here is
+    // a structural subset of a whole-config save. LastConfigDir is the right
+    // anchor for both since the user thinks of ECU files as configs.
+    private void SaveEcu()      => SaveEcuCore(SelectedEcu);
+    private void SaveSetupEcu() => SaveEcuCore(SetupSelectedEcu);
+
+    private void SaveEcuCore(EcuViewModel? ecu)
+    {
+        if (ecu is null) return;
+        var settings = AppSettings.Load();
+        var dlg = new SaveFileDialog
+        {
+            Filter = "ECU (*.ecu.json)|*.ecu.json|JSON (*.json)|*.json|All files|*.*",
+            DefaultExt = ".ecu.json",
+            FileName = $"{ecu.Name}.ecu.json",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastConfigDir),
+        };
+        if (dlg.ShowDialog() != true) return;
+        try
+        {
+            var dto = Core.Persistence.ConfigStore.EcuDtoFrom(ecu.Model);
+            var json = System.Text.Json.JsonSerializer.Serialize(dto,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(dlg.FileName, json);
+            StatusText = $"Saved ECU '{ecu.Name}' to {Path.GetFileName(dlg.FileName)}";
+            PersistLastConfigDir(settings, dlg.FileName);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Save ECU failed: {ex.Message}";
+        }
+    }
+
+    private void LoadEcu()
+    {
+        // CanAddEcu enforces the per-mode ECU count limit (single-ECU modes
+        // refuse a second add). Surface that same gate here so the dropdown
+        // entry disables when adding wouldn't be legal anyway.
+        if (!CanAddEcu()) return;
+        var settings = AppSettings.Load();
+        var dlg = new OpenFileDialog
+        {
+            Filter = "ECU (*.ecu.json)|*.ecu.json|JSON (*.json)|*.json|All files|*.*",
+            InitialDirectory = AppSettings.ResolveInitialDir(settings.LastConfigDir),
+        };
+        if (dlg.ShowDialog() != true) return;
+        try
+        {
+            var json = File.ReadAllText(dlg.FileName);
+            var dto = System.Text.Json.JsonSerializer.Deserialize<Common.Persistence.EcuDto>(json);
+            if (dto is null) { StatusText = "Load ECU: empty file"; return; }
+
+            // CAN-ID collision check: if the bus already has a node on this
+            // ECU's physical request id, suffix the new ECU's name + bump its
+            // CAN IDs to the next free OBD-II pair so the load succeeds
+            // non-destructively. Same convention AddEcu uses for fresh ECUs.
+            var node = Core.Persistence.ConfigStore.EcuNodeFrom(dto);
+            if (bus.FindByRequestId(node.PhysicalRequestCanId) is not null)
+            {
+                ushort req = 0x7E0;
+                while (bus.FindByRequestId(req) != null && req < 0x7E8) req++;
+                node.PhysicalRequestCanId = req;
+                node.UsdtResponseCanId = (ushort)(req + 0x008);
+                node.UudtResponseCanId = (ushort)(req - 0x1F8);
+                node.Name = $"{node.Name} (loaded)";
+            }
+            bus.AddNode(node);
+            var vm = new EcuViewModel(node);
+            vm.BindBus(bus);
+            Ecus.Add(vm);
+            SelectedEcu = vm;
+            StatusText = $"Loaded ECU '{node.Name}' from {Path.GetFileName(dlg.FileName)}";
+            PersistLastConfigDir(settings, dlg.FileName);
+            System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Load ECU failed: {ex.Message}";
+        }
+    }
 
     // Save / Load only the PID list of the SetupSelectedEcu - a partial-config
     // export so a user can move PID + waveform definitions between ECUs / configs
@@ -989,10 +1324,12 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             : $"Reset state on {Ecus.Count} ECU(s)";
     }
 
-    // Opens (or re-focuses) the modeless setup window. Modeless so the user
-    // can keep the main window's Selected ECU inspector visible while editing
-    // PIDs / waveforms next to it. A single-instance check brings the existing
-    // window forward instead of stacking copies.
+    // Opens the ECU Editor as a modal dialog. ShowDialog blocks until the
+    // user closes the editor, so the main window's inspector can't be
+    // interleaved with PID/waveform edits - the editor owns the user's
+    // attention for its lifetime. setupWindow is still tracked so a second
+    // command invocation while one is already open re-focuses rather than
+    // stacking copies (the field guards against that even on the modal path).
     private void OpenSetupWindow()
     {
         if (setupWindow != null)
@@ -1007,8 +1344,17 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             DataContext = this,
             Owner = Application.Current?.MainWindow,
         };
-        setupWindow.Closed += (_, _) => setupWindow = null;
-        setupWindow.Show();
+        setupWindow.Closed += (_, _) =>
+        {
+            setupWindow = null;
+            // The editor may have deleted PIDs / ECUs or rebuilt a PID list
+            // (Load PIDs swaps in fresh PidViewModel instances). Re-resolve the
+            // dashboard against the current ECU set: tiles rebind to the new
+            // instances, and any whose (Ecu, Mode, Address) no longer exists
+            // are dropped.
+            ReconcileTiles();
+        };
+        setupWindow.ShowDialog();
     }
 
     // Launches the setup window pre-pointed at the ECU passed in (via the
@@ -1177,12 +1523,17 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         try
         {
             var s = J2534Registration.Check();
+            // Pill text drops the bitness annotation when both shims are
+            // registered (the normal case). When only one is registered we
+            // surface the asymmetric state as a "fault" - 32-bit-only hosts
+            // can't see a 64-only shim and vice versa, so the registration
+            // is effectively broken for the missing-bitness side.
             J2534Status = (s.Has32, s.Has64) switch
             {
-                (true, true) => "Registered (32-bit + 64-bit)",
-                (true, false) => "Registered (32-bit only)",
-                (false, true) => "Registered (64-bit only)",
-                (false, false) => "Not registered",
+                (true, true)   => "Shim Registered",
+                (true, false)  => "32-bit Shim Fault",
+                (false, true)  => "64-bit Shim Fault",
+                (false, false) => "Shim Not Registered",
             };
         }
         catch (Exception ex)
@@ -1344,7 +1695,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     public void AutoSave()
     {
         // DPS modes are intentionally volatile - skip the write so the next
-        // launch comes up clean. Flash-Tool and ECU Simulator persist normally.
+        // launch comes up clean. ECU Simulator persists normally.
         if (!currentMode.PersistsConfig()) return;
         try
         {
@@ -1358,6 +1709,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             cfgToSave.BinReplay = ConfigStore.Snapshot(bus, replay: replay).BinReplay;
             cfgToSave.PrimeArchivePath = PrimeArchivePath;
             cfgToSave.DonorBinPath = donorBinPath;
+            cfgToSave.LiveTiles = SnapshotTileDescriptors();
             ConfigStore.Save(cfgToSave, path);
         }
         catch
@@ -1537,3 +1889,16 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     private static void Error(string title, Exception ex)
         => MessageBox.Show(ex.Message, title, MessageBoxButton.OK, MessageBoxImage.Error);
 }
+
+// One row in the live-tile picker. Carries the source ECU and exactly one of
+// an editable PID row (Pid) or an $01 OBD-II row (Obd2), plus the
+// "<pid id> - <friendly name>" label shown in the list. AddTileCommand
+// consumes the selected entry to append a dashboard tile.
+public sealed record PidPickerEntry(EcuViewModel Ecu, PidViewModel? Pid, J1979RowViewModel? Obd2, string Display);
+
+// The mode buckets the picker can filter by. Obd2 maps to the built-in $01
+// J1979 projection; the others map 1:1 to PidMode.
+public enum PickerModeFilter { Obd2, Mode1A, Mode22, Mode2D }
+
+// One entry in the picker's mode dropdown: the filter value + its display label.
+public sealed record PickerModeOption(PickerModeFilter Filter, string Display);

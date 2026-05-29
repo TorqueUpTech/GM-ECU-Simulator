@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:conv="clr-namespace:GmEcuSimulator.Converters"
+        xmlns:local="clr-namespace:GmEcuSimulator.Views"
         xmlns:sys="clr-namespace:System;assembly=mscorlib"
         xmlns:proto="clr-namespace:Common.Protocol;assembly=EcuSim.Common"
         xmlns:wave="clr-namespace:Common.Waveforms;assembly=EcuSim.Common"
@@ -9,7 +10,7 @@
         xmlns:av="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="av"
-        Title="PID Setup"
+        Title="ECU Editor"
         Icon="/Resources/app.ico"
         Height="720" Width="1100"
         MinHeight="480" MinWidth="760"
@@ -21,13 +22,16 @@
 
     <Window.Resources>
         <ResourceDictionary>
-            <!-- Material Design styles for the PID grid only. Exploratory: testing the
-                 picker / cell visual against the existing GMThemeManager chrome. -->
-            <ResourceDictionary.MergedDictionaries>
-                <ResourceDictionary Source="/Resources/MaterialDataGrid.xaml"/>
-            </ResourceDictionary.MergedDictionaries>
+            <!-- Material Design merge moved to the PID DataGrid's local
+                 Resources (search for "DataGrid.Resources" below) so the
+                 BundledTheme's implicit Button / TextBox / ComboBox styles
+                 stay scoped to the grid itself. Without that scoping the
+                 implicit styles bled out to the toolbar Save / Load / Add /
+                 Delete icon buttons, repainting them in Material Teal /
+                 DeepOrange instead of the GMThemeManager palette. -->
 
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        <conv:PidModeDisplayConverter   x:Key="PidModeDisplay"/>
 
         <!-- Validation error template + implicit TextBox style. Duplicated
              from MainWindow so validation rendering is consistent between
@@ -58,8 +62,14 @@
             <wave:WaveformShape>Triangle</wave:WaveformShape>
             <wave:WaveformShape>Square</wave:WaveformShape>
             <wave:WaveformShape>Sawtooth</wave:WaveformShape>
+            <wave:WaveformShape>CsvFile</wave:WaveformShape>
             <wave:WaveformShape>Constant</wave:WaveformShape>
         </x:Array>
+        <ObjectDataProvider x:Key="CsvLoopModes" MethodName="GetValues" ObjectType="{x:Type sys:Enum}">
+            <ObjectDataProvider.MethodParameters>
+                <x:Type TypeName="wave:CsvLoopMode"/>
+            </ObjectDataProvider.MethodParameters>
+        </ObjectDataProvider>
         <ObjectDataProvider x:Key="PidSizes" MethodName="GetValues" ObjectType="{x:Type sys:Enum}">
             <ObjectDataProvider.MethodParameters>
                 <x:Type TypeName="proto:PidSize"/>
@@ -85,6 +95,102 @@
         <Style x:Key="Hint14" TargetType="TextBlock" BasedOn="{StaticResource Text.Hint}">
             <Setter Property="FontSize" Value="14"/>
         </Style>
+
+        <!-- Mode-section ($01 / $1A / $22 / $2D) Expander header. The stock Expander
+             header presenter renders a plain string in the system default colour
+             (black, invisible on the dark theme), so we supply a HeaderTemplate that
+             paints the header with the active theme's primary text brush. The
+             template DataContext is the header string itself. -->
+        <DataTemplate x:Key="ModeSectionHeader">
+            <TextBlock Text="{Binding}"
+                       Foreground="{DynamicResource Text.PrimaryBrush}"
+                       FontWeight="SemiBold"
+                       FontSize="15"/>
+        </DataTemplate>
+
+        <!-- Subtle 1px divider between mode sections, using the theme's subtle
+             border brush so it tracks the active palette. -->
+        <Style x:Key="SectionDivider" TargetType="Border">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Background" Value="{DynamicResource Border.SubtleBrush}"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+        </Style>
+
+        <!-- Excel-style column header. DataContext is the column's PidColumnFilter
+             (set via the column's Header binding). Shows the title, a magnifying
+             glass when a filter is active, and a right-click popup with sort
+             asc/desc, a filter box, and clear. Right-click is handled in
+             SetupWindow.xaml.cs (OnColumnHeaderRightClick), which opens the popup
+             by setting the filter's IsOpen. -->
+        <DataTemplate x:Key="PidColumnHeader">
+            <Grid Background="Transparent"
+                  HorizontalAlignment="Stretch"
+                  MouseRightButtonUp="OnColumnHeaderRightClick"
+                  ToolTip="Right-click to sort or filter this column.">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding Title}" VerticalAlignment="Center"/>
+                <!-- Indicators: sort arrow (+ priority number when more than one
+                     column is sorted) then the active-filter magnifying glass. -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding SortGlyph}"
+                               FontFamily="Segoe MDL2 Assets" FontSize="11"
+                               Margin="6,0,0,0" VerticalAlignment="Center"
+                               Foreground="{DynamicResource Accent.PrimaryBrush}"
+                               Visibility="{Binding IsSorted, Converter={StaticResource BoolToVis}}"
+                               ToolTip="This column is part of the sort order."/>
+                    <TextBlock Text="{Binding SortPriorityText}"
+                               FontSize="10" FontWeight="SemiBold"
+                               Margin="1,0,0,0" VerticalAlignment="Center"
+                               Foreground="{DynamicResource Accent.PrimaryBrush}"
+                               Visibility="{Binding ShowSortPriority, Converter={StaticResource BoolToVis}}"
+                               ToolTip="Sort priority (1 = primary key)."/>
+                    <TextBlock Text="&#xE721;"
+                               FontFamily="Segoe MDL2 Assets" FontSize="11"
+                               Margin="6,0,0,0" VerticalAlignment="Center"
+                               Foreground="{DynamicResource Accent.PrimaryBrush}"
+                               Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}"
+                               ToolTip="A filter is active on this column."/>
+                </StackPanel>
+                <Popup Grid.Column="0" Grid.ColumnSpan="2"
+                       IsOpen="{Binding IsOpen}"
+                       StaysOpen="False"
+                       Placement="Bottom"
+                       AllowsTransparency="True"
+                       PopupAnimation="Fade">
+                    <Border Style="{StaticResource Card}" MinWidth="220" Margin="0,4,0,0">
+                        <StackPanel>
+                            <Button Content="Sort Ascending"
+                                    HorizontalContentAlignment="Left"
+                                    Command="{Binding SortAscendingCommand}"
+                                    Margin="0,0,0,4"/>
+                            <Button Content="Sort Descending"
+                                    HorizontalContentAlignment="Left"
+                                    Command="{Binding SortDescendingCommand}"
+                                    Margin="0,0,0,4"/>
+                            <!-- Removes just this column from the multi-level sort;
+                                 hidden until the column is actually sorted. -->
+                            <Button Content="Clear Sort"
+                                    HorizontalContentAlignment="Left"
+                                    Command="{Binding ClearSortCommand}"
+                                    Visibility="{Binding IsSorted, Converter={StaticResource BoolToVis}}"
+                                    Margin="0,0,0,8"/>
+                            <Separator Margin="0,0,0,8"/>
+                            <TextBlock Text="Filter" Style="{StaticResource Caption14}" Margin="0,0,0,4"/>
+                            <TextBox Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}"
+                                     MinHeight="32" VerticalContentAlignment="Center"/>
+                            <Button Content="Clear Filter"
+                                    HorizontalContentAlignment="Left"
+                                    Command="{Binding ClearFilterCommand}"
+                                    Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Popup>
+            </Grid>
+        </DataTemplate>
         </ResourceDictionary>
     </Window.Resources>
 
@@ -107,7 +213,7 @@
                                FontWeight="Bold" FontSize="12"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
-                <TextBlock Text="PID Setup"
+                <TextBlock Text="ECU Editor"
                            Style="{StaticResource Text.Body}"
                            Foreground="{DynamicResource Text.PrimaryBrush}"
                            FontWeight="SemiBold"
@@ -163,7 +269,7 @@
                      MinWidth dropped to 100 so the user can shrink it further
                      via the inserted vertical GridSplitter when they want
                      more horizontal room for the PID grid. -->
-                <ColumnDefinition Width="170" MinWidth="100"/>
+                <ColumnDefinition Width="170" MinWidth="170"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"   MinWidth="320"/>
                 <ColumnDefinition Width="260" MinWidth="260"/>
@@ -173,6 +279,7 @@
             <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,0,0">
                 <Grid>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
@@ -190,7 +297,50 @@
                                    VerticalAlignment="Center"/>
                     </Grid>
 
-                    <ListBox Grid.Row="1"
+                    <!-- ECU toolbar. Save / Load / Add / Remove operate on
+                         SetupSelectedEcu (the list's local selection), not
+                         the main window's SelectedEcu, so the buttons reflect
+                         what the user has highlighted in this pane. Add /
+                         Load reuse the main commands - they create a new ECU
+                         regardless of which "selected" one is in focus. Save
+                         / Remove route to the *Setup* variants so they target
+                         the local selection. Glyphs match the MainWindow ECUs
+                         header (Segoe MDL2 Assets save/load + Path strokes for
+                         the +/-). -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Width="28" Height="22" Padding="0" Margin="0,0,6,0"
+                                Command="{Binding SaveSetupEcuCommand}"
+                                ToolTip="Save the selected ECU (CAN IDs, security module, PIDs, waveforms) to a *.ecu.json file.">
+                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                        <Button Width="28" Height="22" Padding="0" Margin="0,0,6,0"
+                                Command="{Binding LoadEcuCommand}"
+                                ToolTip="Load an ECU from a *.ecu.json file and add it to the bus.">
+                            <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                        <Button Width="28" Height="22" Padding="0" Margin="0,0,6,0"
+                                Command="{Binding AddEcuCommand}"
+                                ToolTip="Add a blank ECU at the next free OBD-II ID.">
+                            <Path Data="M 0,5 L 10,5 M 5,0 L 5,10"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                  StrokeThickness="1.4"
+                                  Width="10" Height="10"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                        <Button Width="28" Height="22" Padding="0"
+                                Command="{Binding RemoveSetupEcuCommand}"
+                                ToolTip="Remove the selected ECU from the bus. Prompts for confirmation.">
+                            <Path Data="M 0,5 L 10,5"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                  StrokeThickness="1.4"
+                                  Width="10" Height="10"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                    </StackPanel>
+
+                    <ListBox Grid.Row="2"
                              ItemsSource="{Binding Ecus}"
                              SelectedItem="{Binding SetupSelectedEcu}"
                              DisplayMemberPath="Name"
@@ -226,6 +376,33 @@
             <!-- PIDs main pane -->
             <Border Grid.Column="2" Style="{StaticResource Card}" Margin="0,0,12,0">
                 <DockPanel DataContext="{Binding SetupSelectedEcu}" LastChildFill="True">
+                    <!-- Selected-ECU header, relocated from the main window. Shows the ECU name
+                         and the "Edit prime..." button (visible only for DPS-primed ECUs). ECU
+                         rename itself lives in the relocated "ECU settings" section below (its
+                         Name field), so the old standalone name editor that used to sit here was
+                         removed to avoid two identical Name inputs stacked together. Binds to the
+                         sidebar-selected ECU via the pane's inherited DataContext. -->
+                    <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Selected ECU"
+                                   Style="{StaticResource Text.Subtitle}"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding Name}"
+                                   Style="{StaticResource Caption14}"
+                                   VerticalAlignment="Center"
+                                   Margin="12,0,0,0"/>
+                        <Button Grid.Column="2"
+                                Content="Edit prime..."
+                                Padding="10,4"
+                                Command="{Binding EditPrimeCommand}"
+                                Visibility="{Binding IsPrimed, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed, TargetNullValue=Collapsed}"
+                                ToolTip="Re-open the DPS Prime Wizard with this ECU's prior selections pre-filled. Replaces the ECU atomically on Apply."/>
+                    </Grid>
                     <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
@@ -261,171 +438,427 @@
                                 <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
                             </Button>
                             <Button Style="{StaticResource IconButton}"
+                                    Margin="0"
                                     Command="{Binding DataContext.LoadPidsCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                                     ToolTip="Load a .pids.json file and replace this ECU's PID list with its contents.">
                                 <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
                             </Button>
-                            <Button Style="{StaticResource IconButton}"
-                                    Command="{Binding DataContext.AddSetupPidCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                    ToolTip="Add a new PID with default waveform settings. The address auto-picks the next free byte range; the name disambiguates if 'New PID' already exists.">
-                                <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
-                            </Button>
-                            <Button Style="{StaticResource IconButton}"
-                                    Margin="0"
-                                    Command="{Binding DataContext.RemoveSetupPidCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                    ToolTip="Remove the selected PID from this ECU.">
-                                <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
-                            </Button>
+                            <!-- Add / Remove moved into each mode section's header (per-section, so a new row lands in
+                                 the right mode). Save / Load here still operate on the whole PID list. -->
                         </StackPanel>
                     </Grid>
 
-                    <DataGrid ItemsSource="{Binding Pids}"
-                              SelectedItem="{Binding SelectedPid}"
-                              AutoGenerateColumns="False"
-                              CanUserAddRows="False"
-                              CanUserDeleteRows="False"
-                              FontSize="14"
-                              ColumnHeaderStyle="{StaticResource PidGrid.ColumnHeader}"
-                              CellStyle="{StaticResource PidGrid.Cell}"
-                              RowHeight="40"
-                              HeadersVisibility="Column"
-                              GridLinesVisibility="Horizontal">
-                        <DataGrid.RowStyle>
-                            <Style TargetType="{x:Type DataGridRow}" BasedOn="{StaticResource {x:Type DataGridRow}}">
-                                <Style.Triggers>
-                                    <!-- $2D alias-collision warning (two Mode2D rows sharing the
-                                         bottom 12 bits of address). Takes priority over the Nyquist
-                                         warning because it indicates an unreachable row, not a
-                                         display artefact. -->
-                                    <DataTrigger Binding="{Binding HasAliasCollision}" Value="True">
-                                        <Setter Property="BorderBrush" Value="{DynamicResource Status.ErrorBrush}"/>
-                                        <Setter Property="BorderThickness" Value="3,0,0,0"/>
-                                        <Setter Property="ToolTip" Value="{Binding AliasCollisionTooltip}"/>
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding HasAliasWarning}" Value="True">
-                                        <Setter Property="BorderBrush" Value="{DynamicResource Status.ErrorBrush}"/>
-                                        <Setter Property="BorderThickness" Value="3,0,0,0"/>
-                                        <Setter Property="ToolTip" Value="{Binding AliasWarningTooltip}"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </DataGrid.RowStyle>
-                        <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="Mode" Width="86">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox Style="{StaticResource PidGrid.ComboBox}"
-                                                  ItemsSource="{Binding Source={StaticResource PidModes}}"
-                                                  SelectedItem="{Binding Mode, UpdateSourceTrigger=PropertyChanged}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <!-- Identifier cell. $1A/$22 rows show a ComboBox picker bound to
-                                 the row's mode-specific PidCatalogue list; $2D rows show a
-                                 free-text hex input for the 32-bit memory address. Both
-                                 controls share the cell - exactly one is visible at a time. -->
-                            <DataGridTemplateColumn Header="Identifier" Width="170">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <Grid>
-                                            <ComboBox Style="{StaticResource PidGrid.ComboBox}"
-                                                      ItemsSource="{Binding IdentifierCatalogue}"
-                                                      DisplayMemberPath="Display"
-                                                      SelectedItem="{Binding SelectedCatalogueEntry, UpdateSourceTrigger=PropertyChanged}"
-                                                      ToolTip="{Binding IdentifierLabel}"
-                                                      Visibility="{Binding IsCatalogueDriven, Converter={StaticResource BoolToVis}}"/>
-                                            <TextBox Style="{StaticResource PidGrid.TextBox}"
-                                                     Text="{Binding AddressHex, UpdateSourceTrigger=LostFocus}"
-                                                     Visibility="{Binding IsHandRolled, Converter={StaticResource BoolToVis}}"/>
+                    <!-- All diagnostic modes as collapsible sections, scrolled vertically. The editable modes
+                         ($1A / $22 / $2D) come from the Sections ItemsControl - one Expander + grid each, with its
+                         own per-mode Add/Remove and its own Excel-style sort/filter column headers. The read-only
+                         $01 (OBD-II) section follows. There is no longer a Mode column: a row's mode is the section
+                         it lives in. Together these are the whole-ECU view. -->
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel>
+                            <!-- ECU settings. The Selected-ECU inspector relocated out of the main window: identity
+                                 (Name), the three CAN IDs, the programming-only FC.BS / Diag addr / Sec module fields,
+                                 and the live-signal Scenario with its sweep knobs. Inherits the pane's DataContext
+                                 (SetupSelectedEcu), so it tracks the ECU highlighted in the sidebar. Collapsible like the
+                                 mode sections; starts expanded since it is the primary per-ECU configuration. The
+                                 ShowsProgrammingFields / ShowsSecurityModuleReadOnly visibility bindings reach the
+                                 MainViewModel via the window DataContext, exactly as they did in the main window. -->
+                            <Expander Header="ECU settings" HeaderTemplate="{StaticResource ModeSectionHeader}"
+                                      IsExpanded="True" Margin="0,0,0,10">
+                                <WrapPanel Orientation="Horizontal">
+                                    <WrapPanel.Resources>
+                                        <!-- Each form cell is a fixed-width Grid so the WrapPanel can lay out 2 columns
+                                             when room permits, 1 when narrow. 280px cell + 12px right gap = ~292px stride. -->
+                                        <Style x:Key="FormCell" TargetType="Grid">
+                                            <Setter Property="Width" Value="280"/>
+                                            <Setter Property="Margin" Value="0,0,12,4"/>
+                                        </Style>
+                                    </WrapPanel.Resources>
+
+                                    <Grid Style="{StaticResource FormCell}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Name"/>
+                                        <TextBox Grid.Column="1" Margin="0,2"
+                                                 Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource FormCell}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Req CAN"/>
+                                        <TextBox Grid.Column="1" Margin="0,2"
+                                                 Text="{Binding PhysicalRequestCanIdHex, UpdateSourceTrigger=LostFocus}"
+                                                 FontFamily="{StaticResource Font.Mono}"/>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource FormCell}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="USDT resp"/>
+                                        <TextBox Grid.Column="1" Margin="0,2"
+                                                 Text="{Binding UsdtResponseCanIdHex, UpdateSourceTrigger=LostFocus}"
+                                                 FontFamily="{StaticResource Font.Mono}"/>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource FormCell}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="UUDT resp"/>
+                                        <TextBox Grid.Column="1" Margin="0,2"
+                                                 Text="{Binding UudtResponseCanIdHex, UpdateSourceTrigger=LostFocus}"
+                                                 FontFamily="{StaticResource Font.Mono}"/>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource FormCell}"
+                                          Visibility="{Binding DataContext.ShowsProgrammingFields, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="FC.BS"/>
+                                        <TextBox Grid.Column="1" Margin="0,2"
+                                                 Text="{Binding FlowControlBlockSizeHex, UpdateSourceTrigger=LostFocus}"
+                                                 FontFamily="{StaticResource Font.Mono}"
+                                                 ToolTip="ISO 15765-2 FlowControl BlockSize (FC.BS). When this ECU receives a First Frame, it replies with FC = 30 BS 00. BS tells the tester how many Consecutive Frames to send before waiting for another FC: 0 = send all CFs in one burst (most permissive, works with most hosts); 1 = send 1 CF then wait for another FC, etc. Set BS=1 for the 6Speed.T43 tester - it sniffs the FC tail for the pattern '01' to recognise a T43 TCM and won't start the kernel upload otherwise."/>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource FormCell}"
+                                          Visibility="{Binding DataContext.ShowsProgrammingFields, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Diag addr"/>
+                                        <TextBox Grid.Column="1" Margin="0,2"
+                                                 Text="{Binding DiagnosticAddressHex, UpdateSourceTrigger=LostFocus}"
+                                                 FontFamily="{StaticResource Font.Mono}"
+                                                 MaxLength="4"
+                                                 ToolTip="GMW3110 8-bit diagnostic address. For SPS type C this is the byte that derives SPS_PrimeReq ($000|addr) and SPS_PrimeRsp ($300|addr). e.g. $11 -> req $011, resp $311. Informational for type A/B (their CAN IDs are explicit)."/>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource FormCell}"
+                                          Visibility="{Binding DataContext.ShowsSecurityModuleReadOnly, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Sec module"/>
+                                        <TextBox Grid.Column="1" Margin="0,2"
+                                                 Text="{Binding SelectedSecurityModuleId, Mode=OneWay}"
+                                                 IsReadOnly="True"
+                                                 FontFamily="{StaticResource Font.Mono}"
+                                                 ToolTip="Seed/key algorithm picked for this primed ECU. In DPS modes the Prime Wizard owns this choice - re-open the wizard (Edit primed) to change it."/>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource FormCell}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Scenario"/>
+                                        <ComboBox Grid.Column="1" Margin="0,2" Height="40"
+                                                  ItemsSource="{Binding Scenarios}"
+                                                  SelectedItem="{Binding SelectedScenario}"
+                                                  ToolTip="Operating point driving this ECU's live signals. Switching it ramps RPM, load, MAP, MAF, O2 etc. toward the new state - a connected tool sees Mode $01 and any signal-backed $22 PIDs move."/>
+                                    </Grid>
+
+                                    <!-- Accel/Decel Sweep knobs. Only shown when the sweep scenario is selected; each is in seconds. -->
+                                    <StackPanel Visibility="{Binding IsSweep, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
+                                        <Grid Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="96"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Accel (s)"/>
+                                            <TextBox Grid.Column="1" Margin="0,2" Text="{Binding SweepAccelSeconds, UpdateSourceTrigger=LostFocus, StringFormat=0.#}"
+                                                     ToolTip="Seconds for the rev pull to climb off idle to the rev limiter."/>
                                         </Grid>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <!-- Name is editable in every mode - even catalogue-driven rows can
-                                 carry a user-supplied label (e.g. "VIN (donor)" to distinguish
-                                 multiple ECUs). The catalogue-picker setter stamps the default
-                                 name in but the user can rename freely afterwards. -->
-                            <DataGridTextColumn Header="Name"    Binding="{Binding Name, UpdateSourceTrigger=LostFocus}"       Width="*" MinWidth="120"
-                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"
-                                                EditingElementStyle="{StaticResource PidGrid.TextColumn.EditingElement}"/>
-                            <!-- Size / Type / Scalar / Offset / Unit are read-only on $1A and $22
-                                 rows (their values come from the picked catalogue entry) and
-                                 fully editable on $2D rows (the user is rolling a custom PID
-                                 from scratch). The IsCatalogueDriven DataTrigger dims the cell
-                                 to make the read-only state visible. -->
-                            <DataGridTemplateColumn Header="Size" Width="84">
-                                <DataGridTemplateColumn.CellTemplate>
+                                        <Grid Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="96"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Limiter (s)"/>
+                                            <TextBox Grid.Column="1" Margin="0,2" Text="{Binding SweepLimiterHoldSeconds, UpdateSourceTrigger=LostFocus, StringFormat=0.#}"
+                                                     ToolTip="Seconds spent bouncing off the rev limiter at the top of the pull (foot flat)."/>
+                                        </Grid>
+                                        <Grid Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="96"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Decel (s)"/>
+                                            <TextBox Grid.Column="1" Margin="0,2" Text="{Binding SweepDecelSeconds, UpdateSourceTrigger=LostFocus, StringFormat=0.#}"
+                                                     ToolTip="Seconds for the lifted-throttle coast back down to idle and a standstill, before the loop repeats."/>
+                                        </Grid>
+                                        <Grid Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="96"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Crossfade (s)"/>
+                                            <TextBox Grid.Column="1" Margin="0,2" Text="{Binding SweepCrossfadeSeconds, UpdateSourceTrigger=LostFocus, StringFormat=0.##}"
+                                                     ToolTip="Seconds the pull eases in from the previous operating point when the sweep is selected (0 = snap straight to the loop)."/>
+                                        </Grid>
+                                        <Grid Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="96"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Label Style="{StaticResource Label.FormPair}" Grid.Column="0" Content="Limiter cut (rpm)"/>
+                                            <TextBox Grid.Column="1" Margin="0,2" Text="{Binding SweepLimiterCutRpm, UpdateSourceTrigger=LostFocus, StringFormat=0.#}"
+                                                     ToolTip="The +/- rpm the engine bounces by while on the rev limiter (the fuel/spark-cut amplitude). 0 = a steady peg at the limit."/>
+                                        </Grid>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </Expander>
+                            <Border Style="{StaticResource SectionDivider}"/>
+
+                            <!-- Sections run lowest mode to highest: $01 first, then the editable $1A / $22 / $2D from
+                                 the Sections ItemsControl. All start collapsed so a freshly-opened ECU isn't a wall of
+                                 grids - the user expands the mode they want. -->
+                            <!-- $01 (OBD-II): every J1979 catalogue PID this ECU can answer, read-only (the encoding
+                                 is legislated) with a per-row "On" toggle that sets whether the ECU advertises it
+                                 (drives the $00/$20 support bitmask). -->
+                            <Expander Header="$01 (OBD-II)" HeaderTemplate="{StaticResource ModeSectionHeader}"
+                                      IsExpanded="False" Margin="0,0,0,10">
+                                <DataGrid ItemsSource="{Binding Obd2Pids}"
+                                          AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          CanUserDeleteRows="False"
+                                          CanUserSortColumns="False"
+                                          FontSize="14"
+                                          HeadersVisibility="Column"
+                                          GridLinesVisibility="Horizontal"
+                                          MaxHeight="320">
+                                    <DataGrid.Columns>
+                                        <DataGridTemplateColumn Header="On" Width="44">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox IsChecked="{Binding Supported, UpdateSourceTrigger=PropertyChanged}"
+                                                              HorizontalAlignment="Center"
+                                                              ToolTip="Advertise this $01 PID. Drives the $00/$20 support bitmask; unchecking makes a tester's request for it return NRC $31."/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="PID"   Binding="{Binding PidHex}"  Width="64"  IsReadOnly="True"/>
+                                        <DataGridTextColumn Header="Name"    Binding="{Binding Name}"    Width="200" IsReadOnly="True"/>
+                                        <DataGridTextColumn Header="Bytes"   Binding="{Binding Bytes}"   Width="60"  IsReadOnly="True"/>
+                                        <DataGridTextColumn Header="Raw"     Binding="{Binding RawHex}"  Width="84"  IsReadOnly="True"
+                                                            FontFamily="{StaticResource Font.Mono}"/>
+                                        <DataGridTextColumn Header="Decoded" Binding="{Binding Decoded}" Width="*" MinWidth="140" IsReadOnly="True"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Expander>
+
+                            <ItemsControl ItemsSource="{Binding Sections}">
+                                <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <ComboBox Style="{StaticResource PidGrid.ComboBox}"
-                                                  ItemsSource="{Binding Source={StaticResource PidSizes}}"
-                                                  SelectedItem="{Binding Size, UpdateSourceTrigger=PropertyChanged}"
-                                                  IsEnabled="{Binding IsHandRolled}"/>
+                                        <!-- Divider above each editable section separates it from the one above
+                                             ($01 from $1A, $1A from $22, $22 from $2D). -->
+                                        <StackPanel>
+                                            <Border Style="{StaticResource SectionDivider}"/>
+                                            <Expander Header="{Binding Title}" HeaderTemplate="{StaticResource ModeSectionHeader}"
+                                                      IsExpanded="False" Margin="0,0,0,10">
+                                                <DockPanel>
+                                                <!-- Per-mode toolbar: Add stamps THIS section's mode onto the new
+                                                     row; Remove deletes this section's selected row. -->
+                                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal"
+                                                            HorizontalAlignment="Right" Margin="0,0,0,6">
+                                                    <Button Width="30" Height="26" Padding="0" Margin="0,0,6,0"
+                                                            Command="{Binding AddCommand}"
+                                                            ToolTip="Add a new row to this mode. The address auto-picks the next free byte range; rename and re-point it after.">
+                                                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Button>
+                                                    <Button Width="30" Height="26" Padding="0"
+                                                            Command="{Binding RemoveCommand}"
+                                                            ToolTip="Remove the selected row in this section.">
+                                                        <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Button>
+                                                </StackPanel>
+
+                                                <DataGrid ItemsSource="{Binding View}"
+                                                          SelectedItem="{Binding SelectedPid}"
+                                                          AutoGenerateColumns="False"
+                                                          CanUserAddRows="False"
+                                                          CanUserDeleteRows="False"
+                                                          CanUserSortColumns="False"
+                                                          FontSize="14"
+                                                          HeadersVisibility="Column"
+                                                          GridLinesVisibility="Horizontal"
+                                                          MaxHeight="320">
+                                                    <!-- All DataGrid chrome + in-cell editors come from
+                                                         GMThemeManager's global DataGrid theme. Sorting/filtering is
+                                                         Excel-style (right-click a header); each header binds to this
+                                                         SECTION's PidColumnFilter objects through SecProxy, since a
+                                                         DataGridColumn can't see the DataGrid's DataContext directly. -->
+                                                    <DataGrid.Resources>
+                                                        <local:BindingProxy x:Key="SecProxy" Data="{Binding}"/>
+                                                    </DataGrid.Resources>
+                                                    <DataGrid.RowStyle>
+                                                        <Style TargetType="{x:Type DataGridRow}" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                                            <Style.Triggers>
+                                                                <!-- $2D alias-collision warning (two Mode2D rows sharing the
+                                                                     bottom 12 bits of address). Takes priority over the Nyquist
+                                                                     warning because it indicates an unreachable row, not a
+                                                                     display artefact. -->
+                                                                <DataTrigger Binding="{Binding HasAliasCollision}" Value="True">
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource Status.ErrorBrush}"/>
+                                                                    <Setter Property="BorderThickness" Value="3,0,0,0"/>
+                                                                    <Setter Property="ToolTip" Value="{Binding AliasCollisionTooltip}"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding HasAliasWarning}" Value="True">
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource Status.ErrorBrush}"/>
+                                                                    <Setter Property="BorderThickness" Value="3,0,0,0"/>
+                                                                    <Setter Property="ToolTip" Value="{Binding AliasWarningTooltip}"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </DataGrid.RowStyle>
+                                                    <DataGrid.Columns>
+                                                        <!-- Identifier cell. $1A/$22 rows show a ComboBox picker bound to
+                                                             the row's mode-specific PidCatalogue list; $2D rows show a
+                                                             free-text hex input for the 32-bit memory address. Both
+                                                             controls share the cell - exactly one is visible at a time. -->
+                                                        <DataGridTemplateColumn Width="170"
+                                                                                HeaderTemplate="{StaticResource PidColumnHeader}"
+                                                                                Header="{Binding Data.IdentifierColumnFilter, Source={StaticResource SecProxy}}">
+                                                            <DataGridTemplateColumn.CellTemplate>
+                                                                <DataTemplate>
+                                                                    <Grid>
+                                                                        <ComboBox Style="{StaticResource DataGrid.InCellComboBox}"
+                                                                                  ItemsSource="{Binding IdentifierCatalogue}"
+                                                                                  DisplayMemberPath="Display"
+                                                                                  SelectedItem="{Binding SelectedCatalogueEntry, UpdateSourceTrigger=PropertyChanged}"
+                                                                                  ToolTip="{Binding IdentifierLabel}"
+                                                                                  Visibility="{Binding IsCatalogueDriven, Converter={StaticResource BoolToVis}}"/>
+                                                                        <TextBox Style="{StaticResource DataGrid.InCellTextBox}"
+                                                                                 Text="{Binding AddressHex, UpdateSourceTrigger=LostFocus}"
+                                                                                 Visibility="{Binding IsHandRolled, Converter={StaticResource BoolToVis}}"/>
+                                                                    </Grid>
+                                                                </DataTemplate>
+                                                            </DataGridTemplateColumn.CellTemplate>
+                                                        </DataGridTemplateColumn>
+                                                        <!-- Name is editable in every mode - even catalogue-driven rows can
+                                                             carry a user-supplied label (e.g. "VIN (donor)" to distinguish
+                                                             multiple ECUs). -->
+                                                        <DataGridTextColumn Binding="{Binding Name, UpdateSourceTrigger=LostFocus}"       Width="*" MinWidth="120"
+                                                                            HeaderTemplate="{StaticResource PidColumnHeader}"
+                                                                            Header="{Binding Data.NameColumnFilter, Source={StaticResource SecProxy}}"
+                                                                            ElementStyle="{StaticResource DataGrid.TextColumnElement}"
+                                                                            EditingElementStyle="{StaticResource MaterialDesignDataGridTextColumnPopupEditingStyle}"/>
+                                                        <!-- Value = the row's static response payload (what a bin load surfaces: VIN,
+                                                             part numbers, ...). ASCII when printable, "0x..." hex otherwise. Edit as
+                                                             text, or prefix "0x" to enter raw bytes; editing resizes the row to match. -->
+                                                        <DataGridTextColumn Binding="{Binding ValueText, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="170"
+                                                                            Header="Value"
+                                                                            FontFamily="{StaticResource Font.Mono}"
+                                                                            ElementStyle="{StaticResource DataGrid.TextColumnElement}"
+                                                                            EditingElementStyle="{StaticResource MaterialDesignDataGridTextColumnPopupEditingStyle}"/>
+                                                        <!-- Size = response length in bytes (1-99), free text. Drives Pid.LengthBytes so widths
+                                                             beyond the old Byte/Word/DWord set work (a VIN is 17). Invalid input shows the row's
+                                                             INotifyDataErrorInfo red border and leaves the model unchanged until corrected. -->
+                                                        <DataGridTemplateColumn Width="84"
+                                                                                HeaderTemplate="{StaticResource PidColumnHeader}"
+                                                                                Header="{Binding Data.SizeColumnFilter, Source={StaticResource SecProxy}}">
+                                                            <DataGridTemplateColumn.CellTemplate>
+                                                                <DataTemplate>
+                                                                    <TextBox Style="{StaticResource DataGrid.InCellTextBox}"
+                                                                             Validation.ErrorTemplate="{StaticResource ValidationErrorTemplate}"
+                                                                             Text="{Binding LengthBytesText, UpdateSourceTrigger=LostFocus, ValidatesOnNotifyDataErrors=True}"
+                                                                             IsReadOnly="{Binding Data.IsMode1A, Source={StaticResource SecProxy}}"
+                                                                             ToolTip="Response length in bytes (1-99). E.g. a VIN is 17 bytes. Read-only for $1A - the identity value's length drives it."/>
+                                                                </DataTemplate>
+                                                            </DataGridTemplateColumn.CellTemplate>
+                                                        </DataGridTemplateColumn>
+                                                        <DataGridTemplateColumn Width="96"
+                                                                                Visibility="{Binding Data.IsNotMode1A, Source={StaticResource SecProxy}, Converter={StaticResource BoolToVis}}"
+                                                                                HeaderTemplate="{StaticResource PidColumnHeader}"
+                                                                                Header="{Binding Data.TypeColumnFilter, Source={StaticResource SecProxy}}">
+                                                            <DataGridTemplateColumn.CellTemplate>
+                                                                <DataTemplate>
+                                                                    <ComboBox Style="{StaticResource DataGrid.InCellComboBox}"
+                                                                              ItemsSource="{Binding Source={StaticResource PidDataTypes}}"
+                                                                              SelectedItem="{Binding DataType, UpdateSourceTrigger=PropertyChanged}"/>
+                                                                </DataTemplate>
+                                                            </DataGridTemplateColumn.CellTemplate>
+                                                        </DataGridTemplateColumn>
+                                                        <!-- Signal source. '(none)' = the PID uses its waveform / static bytes; picking a signal
+                                                             makes the PID read the live engine model on the wire (encoded with Scalar/Offset/Size).
+                                                             The headline control for a $2D row: point a custom address at a live signal. -->
+                                                        <DataGridTemplateColumn Width="150"
+                                                                                Visibility="{Binding Data.IsNotMode1A, Source={StaticResource SecProxy}, Converter={StaticResource BoolToVis}}"
+                                                                                HeaderTemplate="{StaticResource PidColumnHeader}"
+                                                                                Header="{Binding Data.SignalColumnFilter, Source={StaticResource SecProxy}}">
+                                                            <DataGridTemplateColumn.CellTemplate>
+                                                                <DataTemplate>
+                                                                    <ComboBox Style="{StaticResource DataGrid.InCellComboBox}"
+                                                                              ItemsSource="{Binding SignalSourceOptions}"
+                                                                              DisplayMemberPath="Display"
+                                                                              SelectedValuePath="Id"
+                                                                              SelectedValue="{Binding Signal, UpdateSourceTrigger=PropertyChanged}"
+                                                                              ToolTip="Live signal this PID reads from the engine model. '(none)' = use the waveform/static value. On a $2D row this points a custom address at a live signal."/>
+                                                                </DataTemplate>
+                                                            </DataGridTemplateColumn.CellTemplate>
+                                                        </DataGridTemplateColumn>
+                                                        <DataGridTextColumn Binding="{Binding Scalar, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78"
+                                                                            Visibility="{Binding Data.IsNotMode1A, Source={StaticResource SecProxy}, Converter={StaticResource BoolToVis}}"
+                                                                            HeaderTemplate="{StaticResource PidColumnHeader}"
+                                                                            Header="{Binding Data.ScalarColumnFilter, Source={StaticResource SecProxy}}"
+                                                                            ElementStyle="{StaticResource DataGrid.TextColumnElement}"
+                                                                            EditingElementStyle="{StaticResource MaterialDesignDataGridTextColumnPopupEditingStyle}"/>
+                                                        <DataGridTextColumn Binding="{Binding Offset, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78"
+                                                                            Visibility="{Binding Data.IsNotMode1A, Source={StaticResource SecProxy}, Converter={StaticResource BoolToVis}}"
+                                                                            HeaderTemplate="{StaticResource PidColumnHeader}"
+                                                                            Header="{Binding Data.OffsetColumnFilter, Source={StaticResource SecProxy}}"
+                                                                            ElementStyle="{StaticResource DataGrid.TextColumnElement}"
+                                                                            EditingElementStyle="{StaticResource MaterialDesignDataGridTextColumnPopupEditingStyle}"/>
+                                                        <DataGridTextColumn Binding="{Binding Unit, UpdateSourceTrigger=LostFocus}"   Width="72"
+                                                                            Visibility="{Binding Data.IsNotMode1A, Source={StaticResource SecProxy}, Converter={StaticResource BoolToVis}}"
+                                                                            HeaderTemplate="{StaticResource PidColumnHeader}"
+                                                                            Header="{Binding Data.UnitColumnFilter, Source={StaticResource SecProxy}}"
+                                                                            ElementStyle="{StaticResource DataGrid.TextColumnElement}"
+                                                                            EditingElementStyle="{StaticResource MaterialDesignDataGridTextColumnPopupEditingStyle}"/>
+                                                        <DataGridTextColumn Header="Live"   Binding="{Binding LiveValue}" IsReadOnly="True" Width="90"
+                                                                            Visibility="{Binding Data.IsNotMode1A, Source={StaticResource SecProxy}, Converter={StaticResource BoolToVis}}"
+                                                                            ElementStyle="{StaticResource DataGrid.TextColumnElement}"/>
+                                                    </DataGrid.Columns>
+                                                </DataGrid>
+                                            </DockPanel>
+                                            </Expander>
+                                        </StackPanel>
                                     </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Type" Width="96">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox Style="{StaticResource PidGrid.ComboBox}"
-                                                  ItemsSource="{Binding Source={StaticResource PidDataTypes}}"
-                                                  SelectedItem="{Binding DataType, UpdateSourceTrigger=PropertyChanged}"
-                                                  IsEnabled="{Binding IsHandRolled}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Scalar" Binding="{Binding Scalar, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78"
-                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"
-                                                EditingElementStyle="{StaticResource PidGrid.TextColumn.EditingElement}">
-                                <DataGridTextColumn.CellStyle>
-                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource PidGrid.Cell}">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsCatalogueDriven}" Value="True">
-                                                <Setter Property="IsEnabled" Value="False"/>
-                                                <Setter Property="Opacity" Value="0.45"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </DataGridTextColumn.CellStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn Header="Offset" Binding="{Binding Offset, StringFormat=G, UpdateSourceTrigger=LostFocus}" Width="78"
-                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"
-                                                EditingElementStyle="{StaticResource PidGrid.TextColumn.EditingElement}">
-                                <DataGridTextColumn.CellStyle>
-                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource PidGrid.Cell}">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsCatalogueDriven}" Value="True">
-                                                <Setter Property="IsEnabled" Value="False"/>
-                                                <Setter Property="Opacity" Value="0.45"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </DataGridTextColumn.CellStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn Header="Unit"   Binding="{Binding Unit, UpdateSourceTrigger=LostFocus}"   Width="72"
-                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"
-                                                EditingElementStyle="{StaticResource PidGrid.TextColumn.EditingElement}">
-                                <DataGridTextColumn.CellStyle>
-                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource PidGrid.Cell}">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsCatalogueDriven}" Value="True">
-                                                <Setter Property="IsEnabled" Value="False"/>
-                                                <Setter Property="Opacity" Value="0.45"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </DataGridTextColumn.CellStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn Header="Live"   Binding="{Binding LiveValue}" IsReadOnly="True" Width="90"
-                                                ElementStyle="{StaticResource PidGrid.TextColumn.Element}"/>
-                        </DataGrid.Columns>
-                    </DataGrid>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
                 </DockPanel>
             </Border>
+
+            <!-- Right-side stack: Waveform inspector (top, sized to content)
+                 and Advanced card (fills the remainder). Each card binds to
+                 its own DataContext - waveform per-PID, advanced per-ECU - so
+                 changing ECU or selected PID re-targets the appropriate card. -->
+            <Grid Grid.Column="3">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
 
             <!-- Waveform inspector. Bound to the setup-selected ECU's
                  selected PID's waveform so changing ECU here flips the
                  waveform fields too. -->
-            <Border Grid.Column="3" Style="{StaticResource Card}"
+            <Border Grid.Row="0" Style="{StaticResource Card}"
                     DataContext="{Binding SetupSelectedEcu.SelectedPid.Waveform}">
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Top"
@@ -446,6 +879,8 @@
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="40"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
@@ -490,10 +925,128 @@
                                      Text="{Binding DutyCycle, StringFormat=G, UpdateSourceTrigger=LostFocus}"
                                      Visibility="{Binding SupportsDuty, Converter={StaticResource BoolToVis}}"
                                      FontFamily="{StaticResource Font.Mono}"/>
+
+                            <!-- CsvFile shape: picker + loop mode. The picker
+                                 button validates the file before saving the
+                                 path (column A strictly-increasing time,
+                                 column B numeric, optional header tolerated).
+                                 The display label collapses long paths to the
+                                 file name so the inspector stays readable. -->
+                            <Label Style="{StaticResource Label.FormPair}" Grid.Row="6" Grid.Column="0" Content="CSV file"
+                                   Visibility="{Binding SupportsCsv, Converter={StaticResource BoolToVis}}"/>
+                            <Grid Grid.Row="6" Grid.Column="1" Margin="0,2"
+                                  Visibility="{Binding SupportsCsv, Converter={StaticResource BoolToVis}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding CsvFileDisplay}"
+                                           ToolTip="{Binding CsvFilePath}"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis"
+                                           FontFamily="{StaticResource Font.Mono}"/>
+                                <Button Grid.Column="1" Margin="6,0,0,0" Padding="8,2"
+                                        Content="Browse..."
+                                        Command="{Binding PickCsvFileCommand}"/>
+                                <Button Grid.Column="2" Margin="4,0,0,0" Padding="8,2"
+                                        Content="Clear"
+                                        Command="{Binding ClearCsvFileCommand}"/>
+                            </Grid>
+
+                            <Label Style="{StaticResource Label.FormPair}" Grid.Row="7" Grid.Column="0" Content="On end"
+                                   Visibility="{Binding SupportsCsv, Converter={StaticResource BoolToVis}}"/>
+                            <ComboBox Grid.Row="7" Grid.Column="1" Margin="0,2"
+                                      ItemsSource="{Binding Source={StaticResource CsvLoopModes}}"
+                                      SelectedItem="{Binding CsvLoopMode, UpdateSourceTrigger=PropertyChanged}"
+                                      Visibility="{Binding SupportsCsv, Converter={StaticResource BoolToVis}}"/>
                         </Grid>
                     </ScrollViewer>
                 </DockPanel>
             </Border>
+
+            <!-- Advanced card. Per-ECU settings that don't fit the
+                 selected-ECU inspector in the main window OR aren't tied to
+                 a single PID. Exposes ISO 15765-2 FlowControl BlockSize, the
+                 $27 SecurityAccess module picker, and the embedded PID-library
+                 auto-respond gate; further per-ECU diagnostic-stack knobs will
+                 follow. Margin top of 12 matches the gap the parent column
+                 already imposes between sibling cards in the main editor pane. -->
+            <Border Grid.Row="1" Style="{StaticResource Card}"
+                    Margin="0,12,0,0"
+                    DataContext="{Binding SetupSelectedEcu}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top"
+                               Text="Advanced"
+                               Style="{StaticResource Text.Subtitle}"
+                               Margin="0,0,0,12"/>
+                    <TextBlock DockPanel.Dock="Top"
+                               Text="Per-ECU diagnostic-stack settings."
+                               Style="{StaticResource Hint14}"
+                               Margin="0,-4,0,12"/>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <Grid VerticalAlignment="Top">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="74"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- ISO 15765-2 FlowControl BlockSize. The ECU
+                                 returns FC = 30 BS 00 after a First Frame;
+                                 BS counts how many Consecutive Frames the
+                                 tester may send before waiting for another
+                                 FC. 0 = unrestricted (send all CFs in one
+                                 burst); 1 = strict (one CF per FC, needed
+                                 by the 6Speed.T43 tester to recognise a
+                                 T43 TCM). -->
+                            <Label Style="{StaticResource Label.FormPair}"
+                                   Grid.Row="0" Grid.Column="0" Content="FC.BS"/>
+                            <TextBox x:Name="AdvancedFcBsTextBox"
+                                     Grid.Row="0" Grid.Column="1" Margin="0,2"
+                                     Text="{Binding FlowControlBlockSizeHex, UpdateSourceTrigger=LostFocus}"
+                                     FontFamily="{StaticResource Font.Mono}"
+                                     ToolTip="ISO 15765-2 FlowControl BlockSize emitted on First Frame reception. 0x00 = unrestricted; 0x01 = one Consecutive Frame per FC cycle (needed by some testers, e.g. 6Speed.T43)."/>
+
+                            <!-- $27 SecurityAccess module picker. Identical
+                                 wiring to the MainWindow Selected-ECU pane's
+                                 "Sec module" field so a change here is
+                                 reflected there (and vice versa) - both bind
+                                 SelectedSecurityModuleId on the same shared
+                                 EcuViewModel, and EcuViewModel.ApplyModuleSelection
+                                 swaps the live module + resets security state.
+                                 "(none)" makes $27 return NRC $11. -->
+                            <Label Style="{StaticResource Label.FormPair}"
+                                   Grid.Row="1" Grid.Column="0" Content="Sec module"/>
+                            <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,2"
+                                      Height="{Binding ActualHeight, ElementName=AdvancedFcBsTextBox}"
+                                      ItemsSource="{Binding AvailableSecurityModuleIds}"
+                                      SelectedItem="{Binding SelectedSecurityModuleId}"
+                                      FontFamily="{StaticResource Font.Mono}"
+                                      ToolTip="Seed/key algorithm for this ECU. (none) makes $27 return NRC $11. Picking an entry rebuilds the security module and clears any prior unlock / lockout state."/>
+
+                            <!-- Import identity from a real flash readback (.bin). Picks a file, inspects/classifies
+                                 it, then prompts before overwriting this ECU's current placeholder ("sentinel")
+                                 identity - VIN, part numbers, etc. - with the values extracted from the bin. -->
+                            <Button Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                    Margin="0,12,0,2"
+                                    HorizontalAlignment="Left"
+                                    Content="Load identity from bin..."
+                                    Command="{Binding LoadInfoFromBinCommand}"
+                                    ToolTip="Pick a GM ECU flash readback (.bin). The simulator inspects it and asks whether to overwrite this ECU's current placeholder identity (VIN, part numbers, ...) with the bin's values, or only fill blank fields."/>
+                        </Grid>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            </Grid>
         </Grid>
     </DockPanel>
 </Window>

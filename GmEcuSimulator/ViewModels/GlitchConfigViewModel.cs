@@ -1,5 +1,5 @@
-using System.Collections.ObjectModel;
 using Common.Glitch;
+using System.Collections.ObjectModel;
 
 namespace GmEcuSimulator.ViewModels;
 

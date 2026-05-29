@@ -1,5 +1,5 @@
-using System.Buffers.Binary;
 using Core.Identification;
+using System.Buffers.Binary;
 using Xunit;
 
 namespace EcuSimulator.Tests.Identification;

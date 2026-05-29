@@ -68,8 +68,9 @@ public sealed class ArchivePrimerTests
         Assert.NotNull(vinBytes);
         Assert.Equal("1GCRKSE36BZ158034", System.Text.Encoding.ASCII.GetString(vinBytes!));
 
-        Assert.NotEmpty(node.Pids);
-        Assert.Contains(node.Pids, p => p.Address == 0x155B);
+        var allPids = node.AllPids.ToList();
+        Assert.NotEmpty(allPids);
+        Assert.Contains(allPids, p => p.Address == 0x155B);
     }
 
     [Fact]

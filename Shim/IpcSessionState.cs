@@ -1,13 +1,22 @@
-using System.Collections.Concurrent;
 using Common.PassThru;
 using Core.Bus;
+using System.Collections.Concurrent;
 
 namespace Shim.Ipc;
 
 // Per-pipe-connection state: handle ID allocator + open J2534 channels for
 // the host on the other end of this pipe. Each PassThru shim instance gets
 // its own IpcSessionState so handle IDs don't collide across hosts.
-public sealed class IpcSessionState : IDisposable
+//
+// Also implements IFrameBroadcaster so Core-side handlers can shove raw
+// CAN frames at every channel without needing a direct reference to the
+// channel collection (Core can't reference Shim). Used by FordCapturePersona
+// to emit UUDT broadcasts on 0x6A0/0x6A1 - PCMTec's PASS_FILTER for those
+// IDs lives on a different J2534 channel than the diagnostic request,
+// so the request channel's EnqueueRx doesn't reach it. BroadcastFrame
+// offers the frame to every channel and each channel applies its own
+// filter table.
+public sealed class IpcSessionState : IDisposable, IFrameBroadcaster
 {
     public VirtualBus Bus { get; }
 
@@ -33,6 +42,31 @@ public sealed class IpcSessionState : IDisposable
         // (Dispose, below) is now the authoritative "host is gone" signal
         // and runs the same periodic-timer teardown.
         Bus.IdleReset += OnBusIdleReset;
+
+        // Wire the cross-channel broadcaster. Ford-capture persona's UUDT
+        // emitter uses this to push frames at every channel; each channel's
+        // filter table decides delivery.
+        Bus.Broadcaster = this;
+    }
+
+    /// <summary>
+    /// IFrameBroadcaster: offer a raw frame to every channel. Each channel
+    /// applies its own PASS / BLOCK filter table inside EnqueueRx, so a
+    /// 0x6A0-shaped frame only lands on channels that have a matching
+    /// PASS_FILTER (which PCMTec installed on its UUDT listener channel).
+    /// Safe to call concurrently with channel allocation - the underlying
+    /// ConcurrentDictionary tolerates iteration during writes.
+    /// </summary>
+    public void BroadcastFrame(byte[] frame)
+    {
+        foreach (var ch in channels.Values)
+        {
+            ch.EnqueueRx(new PassThruMsg
+            {
+                ProtocolID = ProtocolID.CAN,
+                Data = frame,
+            });
+        }
     }
 
     private void OnBusIdleReset()
@@ -62,6 +96,11 @@ public sealed class IpcSessionState : IDisposable
     public void Dispose()
     {
         Bus.IdleReset -= OnBusIdleReset;
+        // Tear down the broadcaster registration so a subsequent session
+        // (next host connect) rebinds against a live IpcSessionState; the
+        // old one would be calling EnqueueRx on disposed channels otherwise.
+        if (ReferenceEquals(Bus.Broadcaster, this))
+            Bus.Broadcaster = null;
         // Dispose any remaining periodic timers (channel disconnect path
         // should have already cleared them, but belt-and-braces).
         foreach (var kv in periodicTimers.ToArray())

@@ -15,4 +15,10 @@
     <PackageReference Include="System.Text.Json" Version="10.0.7" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Pids\Mode01Library.bin" />
+    <EmbeddedResource Include="Pids\Mode1ALibrary.bin" />
+    <EmbeddedResource Include="Pids\Mode22Library.bin" />
+  </ItemGroup>
+
 </Project>

@@ -1,4 +1,5 @@
 using Common.Protocol;
+using Common.Signals;
 using Common.Waveforms;
 
 namespace Core.Ecu;
@@ -71,14 +72,25 @@ public sealed class Pid
     /// when explicit, otherwise the value of the legacy <see cref="Size"/> enum.</summary>
     public int ResponseLength => LengthBytes ?? (int)Size;
 
+    // When set, this PID is signal-backed: its value comes from the owning ECU's EngineModel (live, scenario-driven)
+    // rather than a standalone waveform or StaticBytes. Scalar/Offset/DataType still define the wire encoding, so the
+    // same signal can carry GM A2L scaling here while Mode $01 carries the legislated J1979 formula for it. Null = a
+    // legacy waveform / static PID. Resolving it needs the engine attached via AttachEngine (EcuNode.AddPid does so).
+    public SignalId? Signal { get; set; }
+
     /// <summary>
     /// Fill <paramref name="dest"/> with this PID's response payload bytes.
-    /// Uses <see cref="StaticBytes"/> verbatim (padded with zeros if shorter
-    /// than the destination) when present; otherwise samples the waveform and
-    /// encodes through <see cref="ValueCodec.Encode"/> like the legacy path.
+    /// Precedence: a signal-backed PID (<see cref="Signal"/> set, engine attached) samples the live EngineModel;
+    /// otherwise <see cref="StaticBytes"/> verbatim (zero-padded if shorter) when present; otherwise the waveform.
+    /// All numeric paths encode through <see cref="ValueCodec.Encode"/> with this PID's Scalar/Offset/DataType.
     /// </summary>
     public void WriteResponseBytes(double timeMs, Span<byte> dest)
     {
+        if (Signal is { } sig && engine is { } eng)
+        {
+            ValueCodec.Encode(eng.Sample(sig, timeMs), Scalar, Offset, DataType, dest.Length, dest);
+            return;
+        }
         if (StaticBytes is not null)
         {
             int n = Math.Min(StaticBytes.Length, dest.Length);
@@ -91,6 +103,15 @@ public sealed class Pid
             Scalar, Offset, DataType, dest.Length, dest);
     }
 
+    // The PID's current engineering value (pre-encoding): the live signal when signal-backed, otherwise the waveform
+    // sample; static-byte PIDs have no scalar value so report 0. Used by the editor's live readout - the wire path
+    // goes through WriteResponseBytes, which applies Scalar/Offset on top of this.
+    public double SampleValue(double timeMs)
+    {
+        if (Signal is { } sig && engine is { } eng) return eng.Sample(sig, timeMs);
+        return StaticBytes is not null ? 0 : waveform.Sample(timeMs);
+    }
+
     private WaveformConfig waveformConfig = new();
     private IWaveformGenerator waveform;
 
@@ -98,6 +119,14 @@ public sealed class Pid
     // bound to the coordinator + channel index. Null when no bin is loaded for this PID, in which case Shape ==
     // FileStream falls back to a constant-zero generator so the dropdown selection never crashes.
     private Func<IWaveformGenerator>? replayWaveformFactory;
+
+    // The owning ECU's engine model, attached by EcuNode.AddPid so a signal-backed PID resolves its value live. Null
+    // until the PID is added to a node (e.g. a bare Pid in a test): a signal-backed PID with no engine falls through
+    // to the StaticBytes / waveform path.
+    private EngineModel? engine;
+
+    // Bind this PID to its owning ECU's engine model. Called by EcuNode.AddPid; lets WriteResponseBytes resolve Signal.
+    internal void AttachEngine(EngineModel engineModel) => engine = engineModel;
 
     public Pid()
     {

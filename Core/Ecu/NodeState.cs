@@ -1,6 +1,6 @@
-using System.Collections.Concurrent;
 using Core.Bus;
 using Core.Transport;
+using System.Collections.Concurrent;
 
 namespace Core.Ecu;
 
@@ -210,12 +210,15 @@ public sealed class NodeState
     public uint DownloadCaptureSequence { get; set; }
 
     /// <summary>
-    /// UTC timestamp pinned on the first $34 of a capture-mode session, so
-    /// every .bin written by that session shares a stable yyyymmdd_hhmmss
-    /// prefix and groups visually in the captures dir. Null until the first
-    /// $34 in capture mode arrives. Reset by ClearProgrammingState.
+    /// Local-time timestamp pinned on the first $34 of a capture-mode session,
+    /// so every .bin written by that session shares a stable yyyymmdd_HHmmss
+    /// prefix and groups visually in the captures dir. Local (not UTC) so the
+    /// folder name on disk matches the wall-clock time the user saw when they
+    /// kicked off the session - the captures dir is a user-facing artefact,
+    /// not a machine-correlated log. Null until the first $34 in capture mode
+    /// arrives. Reset by ClearProgrammingState.
     /// </summary>
-    public DateTime? DownloadCaptureSessionTimestampUtc { get; set; }
+    public DateTime? DownloadCaptureSessionTimestamp { get; set; }
 
     /// <summary>
     /// Flash regions erased by the SPS kernel via $31 RoutineControl
@@ -246,7 +249,7 @@ public sealed class NodeState
         DownloadCaptureBaseAddress = null;
         DownloadCaptureHighWaterMark = 0;
         DownloadCaptureSequence = 0;
-        DownloadCaptureSessionTimestampUtc = null;
+        DownloadCaptureSessionTimestamp = null;
         CapturedFlashRegions.Clear();
     }
 }

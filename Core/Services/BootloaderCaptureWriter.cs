@@ -1,7 +1,6 @@
-using System.Globalization;
-using System.IO;
 using Core.Bus;
 using Core.Ecu;
+using System.Globalization;
 
 namespace Core.Services;
 
@@ -36,12 +35,14 @@ public static class BootloaderCaptureWriter
         {
             // Pin the session timestamp on the first capture write so every
             // .bin from this session shares a stable yyyymmdd_HHmmss prefix.
-            if (node.State.DownloadCaptureSessionTimestampUtc is null)
-                node.State.DownloadCaptureSessionTimestampUtc = DateTime.UtcNow;
+            // Local time, not UTC: this folder name is what the user sees in
+            // Explorer, and it should match the wall clock on their machine.
+            if (node.State.DownloadCaptureSessionTimestamp is null)
+                node.State.DownloadCaptureSessionTimestamp = DateTime.Now;
 
-            var tsUtc = node.State.DownloadCaptureSessionTimestampUtc.Value;
+            var tsLocal = node.State.DownloadCaptureSessionTimestamp.Value;
             uint seq = node.State.DownloadCaptureSequence;
-            string ts = tsUtc.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+            string ts = tsLocal.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
             // Per-session subdirectory so a fresh download doesn't fill the
             // captures root with dozens of loose files. Subdir name pins the
             // ECU + session start; filename inside is just seq + addr + len.
@@ -90,8 +91,8 @@ public static class BootloaderCaptureWriter
 
         try
         {
-            var tsUtc = node.State.DownloadCaptureSessionTimestampUtc ?? DateTime.UtcNow;
-            string ts = tsUtc.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+            var tsLocal = node.State.DownloadCaptureSessionTimestamp ?? DateTime.Now;
+            string ts = tsLocal.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
             string sessionDir = string.Format(CultureInfo.InvariantCulture,
                 "{0}_{1}", Sanitise(node.Name), ts);
             string fullDir = Path.Combine(settings.CaptureDirectory!, sessionDir);
@@ -115,6 +116,71 @@ public static class BootloaderCaptureWriter
         catch (Exception ex)
         {
             bus.LogSim?.Invoke($"[capture] flash region write failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Bracket-close kernel sniffer. Looks at the current contents of
+    /// node.State.DownloadBuffer[0..DownloadCaptureHighWaterMark] - i.e.
+    /// the reassembled payload of every $36 that's landed since the most
+    /// recent $34 - runs PowerPcSniffer over it, and if it sniffs as
+    /// compiled PowerPC code, dumps a tagged "kernel_*.bin" alongside the
+    /// per-$36 fragments. Fires at:
+    ///   - the next $34 (prior bracket is about to be reallocated),
+    ///   - $36 sub-$80 DownloadAndExecute (the explicit handover boundary),
+    ///   - session end via EcuExitLogic ($20 / P3C timeout / disconnect).
+    ///
+    /// Reason is embedded in the filename ("next34" / "exec" / "end") so a
+    /// post-mortem read of the captures dir tells you which boundary
+    /// flagged the blob.
+    ///
+    /// Per-$36 .bin fragments still land regardless - this is an additive
+    /// tag write, not a replacement.
+    /// </summary>
+    public static void WriteCompletedBracketIfKernel(EcuNode node, VirtualBus bus, string reason)
+    {
+        var settings = bus.Capture;
+        if (string.IsNullOrEmpty(settings.CaptureDirectory)) return;
+
+        var buf = node.State.DownloadBuffer;
+        if (buf is null) return;
+        int len = (int)Math.Min((uint)buf.Length, node.State.DownloadCaptureHighWaterMark);
+        if (len == 0) return;
+
+        if (!PowerPcSniffer.IsLikelyCode(buf.AsSpan(0, len), out string snifferReason))
+        {
+            bus.LogSim?.Invoke($"[capture] bracket-close ({reason}) on {node.Name}: not kernel ({snifferReason})");
+            return;
+        }
+
+        try
+        {
+            if (node.State.DownloadCaptureSessionTimestamp is null)
+                node.State.DownloadCaptureSessionTimestamp = DateTime.Now;
+
+            var tsLocal = node.State.DownloadCaptureSessionTimestamp.Value;
+            string ts = tsLocal.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+            string sessionDir = string.Format(CultureInfo.InvariantCulture,
+                "{0}_{1}", Sanitise(node.Name), ts);
+            string fullDir = Path.Combine(settings.CaptureDirectory!, sessionDir);
+            Directory.CreateDirectory(fullDir);
+
+            uint seq = node.State.DownloadCaptureSequence++;
+            uint baseAddr = node.State.DownloadCaptureBaseAddress ?? 0u;
+            string fileName = string.Format(CultureInfo.InvariantCulture,
+                "{0:D3}_kernel_{1:X8}_{2}_{3}.bin", seq, baseAddr, len, reason);
+            string path = Path.Combine(fullDir, fileName);
+
+            File.WriteAllBytes(path, buf.AsSpan(0, len).ToArray());
+
+            bus.LogSim?.Invoke(
+                $"[capture] KERNEL ({reason}) on {node.Name}: {len} B @ 0x{baseAddr:X8} " +
+                $"[{snifferReason}] -> {path}");
+            settings.RaiseCaptureWritten(path);
+        }
+        catch (Exception ex)
+        {
+            bus.LogSim?.Invoke($"[capture] kernel write failed: {ex.Message}");
         }
     }
 

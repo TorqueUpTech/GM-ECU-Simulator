@@ -1,0 +1,120 @@
+{
+  "version": 16,
+  "ecus": [
+    {
+      "name": "ECM",
+      "physicalRequestCanId": "0x7E0",
+      "usdtResponseCanId": "0x7E8",
+      "uudtResponseCanId": "0x5E8",
+      "glitch": {
+        "enabled": false,
+        "services": [
+          {
+            "serviceId": 34,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 44,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 45,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 170,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 62,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 32,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 16,
+            "probability": 0,
+            "action": "emitNrc"
+          }
+        ],
+        "nrcPool": [
+          17,
+          18,
+          34,
+          49
+        ]
+      },
+      "securityModuleId": "gm-e38-2byte",
+      "flowControlBlockSize": 0,
+      "programmedState": 0,
+      "diagnosticAddress": "0x00",
+      "pids": []
+    },
+    {
+      "name": "TCM",
+      "physicalRequestCanId": "0x7E2",
+      "usdtResponseCanId": "0x7EA",
+      "uudtResponseCanId": "0x5EA",
+      "glitch": {
+        "enabled": false,
+        "services": [
+          {
+            "serviceId": 34,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 44,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 45,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 170,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 62,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 32,
+            "probability": 0,
+            "action": "emitNrc"
+          },
+          {
+            "serviceId": 16,
+            "probability": 0,
+            "action": "emitNrc"
+          }
+        ],
+        "nrcPool": [
+          17,
+          18,
+          34,
+          49
+        ]
+      },
+      "securityModuleId": "gm-bypass-2byte",
+      "flowControlBlockSize": 1,
+      "programmedState": 0,
+      "diagnosticAddress": "0x00",
+      "pids": [],
+      "autoRespondFromLibrary": false
+    }
+  ]
+}

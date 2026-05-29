@@ -1,5 +1,5 @@
-using System.Text.Json;
 using Common.Protocol;
+using System.Text.Json;
 
 namespace Core.Security.Modules;
 

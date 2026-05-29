@@ -1,15 +1,15 @@
+using Core.Bus;
+using GmEcuSimulator.ViewModels;
+using GMThemeManager;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Shapes;
 using System.Windows.Threading;
-using Core.Bus;
-using GMThemeManager;
-using GmEcuSimulator.ViewModels;
 
 namespace GmEcuSimulator;
 
@@ -472,6 +472,7 @@ public partial class MainWindow : Window
             {
                 foreach (var pid in ecu.Pids)
                     pid.RefreshLive(now);
+                ecu.RefreshObd2Live(now);
                 ecu.RefreshSecurity(nowLong);
             }
             vm.RefreshBinReplayLive();
@@ -566,4 +567,191 @@ public partial class MainWindow : Window
     }
 
     private void OnExitClicked(object sender, RoutedEventArgs e) => Close();
+
+    // ---------------- Live-tile dashboard: picker + drag-reorder ----------------
+
+    // Drag payload format. The dragged tile itself is held in draggedTile; the
+    // DataObject just tags the drag as ours so foreign drops are ignored.
+    private const string LiveTileFormat = "GmEcuSim.LiveTile";
+
+    private Point liveTileDragStart;
+    private PidTileViewModel? draggedTile;
+    private InsertionAdorner? insertionAdorner;
+
+    // + button -> open the PID picker popup.
+    private void AddTileButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (vm != null) vm.PickerOpen = true;
+    }
+
+    // Double-click a candidate -> pin it (same as the Add button).
+    private void PickerList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (vm == null) return;
+        if (((ListBox)sender).SelectedItem is PidPickerEntry entry && vm.AddTileCommand.CanExecute(entry))
+            vm.AddTileCommand.Execute(entry);
+    }
+
+    // Record the press point and which tile (if any) sits under it. The drag
+    // doesn't begin until the pointer moves past the system drag threshold.
+    private void LiveTileItems_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        liveTileDragStart = e.GetPosition(null);
+        draggedTile = FindAncestor<ContentPresenter>(e.OriginalSource as DependencyObject)?.DataContext as PidTileViewModel;
+    }
+
+    private void LiveTileItems_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (draggedTile == null || e.LeftButton != MouseButtonState.Pressed) return;
+        var pos = e.GetPosition(null);
+        if (Math.Abs(pos.X - liveTileDragStart.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(pos.Y - liveTileDragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+
+        try
+        {
+            // Blocks until the drop completes; DragOver/Drop fire during it.
+            DragDrop.DoDragDrop(LiveTileItems, new DataObject(LiveTileFormat, draggedTile), DragDropEffects.Move);
+        }
+        finally
+        {
+            RemoveInsertionAdorner();
+            draggedTile = null;
+        }
+    }
+
+    private void LiveTileItems_DragOver(object sender, DragEventArgs e)
+    {
+        if (draggedTile == null || !e.Data.GetDataPresent(LiveTileFormat))
+        {
+            e.Effects = DragDropEffects.None;
+            return;
+        }
+        e.Effects = DragDropEffects.Move;
+        int index = ComputeInsertionIndex(e.GetPosition(LiveTileItems));
+        ShowInsertionAdorner(MarkerForIndex(index));
+        e.Handled = true;
+    }
+
+    private void LiveTileItems_DragLeave(object sender, DragEventArgs e)
+    {
+        // DragLeave also fires when crossing between child tiles - only clear
+        // the indicator when the pointer has actually left the control.
+        var p = e.GetPosition(LiveTileItems);
+        if (p.X < 0 || p.Y < 0 || p.X > LiveTileItems.ActualWidth || p.Y > LiveTileItems.ActualHeight)
+            RemoveInsertionAdorner();
+    }
+
+    private void LiveTileItems_Drop(object sender, DragEventArgs e)
+    {
+        RemoveInsertionAdorner();
+        if (vm == null || draggedTile == null || !e.Data.GetDataPresent(LiveTileFormat)) return;
+
+        int from = vm.LiveTiles.IndexOf(draggedTile);
+        if (from < 0) return;
+        int to = ComputeInsertionIndex(e.GetPosition(LiveTileItems));
+        // ComputeInsertionIndex counts in pre-removal coordinates; once the
+        // dragged tile is pulled out, every slot after it shifts down by one.
+        if (to > from) to--;
+        vm.MoveTile(from, to);
+        e.Handled = true;
+    }
+
+    // Insertion index in reading order (left-to-right, top-to-bottom): the
+    // number of tiles that sit before the cursor. A tile is "before" when the
+    // cursor is on a lower row, or on the same row and right of the tile's
+    // horizontal midpoint.
+    private int ComputeInsertionIndex(Point pos)
+    {
+        int index = 0;
+        for (int i = 0; i < LiveTileItems.Items.Count; i++)
+        {
+            if (LiveTileItems.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement fe
+                || fe.ActualWidth == 0)
+                continue;
+            var tl = fe.TranslatePoint(new Point(0, 0), LiveTileItems);
+            var r = new Rect(tl, new Size(fe.ActualWidth, fe.ActualHeight));
+            bool before = pos.Y > r.Bottom || (pos.Y >= r.Top && pos.X > r.Left + r.Width / 2);
+            if (before) index = i + 1;
+        }
+        return index;
+    }
+
+    // The snapped vertical-bar rectangle for an insertion index: the left edge
+    // of the tile at that index, or the right edge of the last tile when the
+    // index is past the end. The bar is centred in the inter-tile gap.
+    private Rect MarkerForIndex(int index)
+    {
+        int count = LiveTileItems.Items.Count;
+        if (count == 0) return Rect.Empty;
+        if (index < count
+            && LiveTileItems.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement fe
+            && fe.ActualWidth > 0)
+        {
+            var tl = fe.TranslatePoint(new Point(0, 0), LiveTileItems);
+            return new Rect(tl.X - 4, tl.Y, 0, fe.ActualHeight);
+        }
+        if (LiveTileItems.ItemContainerGenerator.ContainerFromIndex(count - 1) is FrameworkElement last
+            && last.ActualWidth > 0)
+        {
+            var tl = last.TranslatePoint(new Point(0, 0), LiveTileItems);
+            return new Rect(tl.X + last.ActualWidth + 4, tl.Y, 0, last.ActualHeight);
+        }
+        return Rect.Empty;
+    }
+
+    private void ShowInsertionAdorner(Rect marker)
+    {
+        if (marker.IsEmpty) { RemoveInsertionAdorner(); return; }
+        var layer = AdornerLayer.GetAdornerLayer(LiveTileItems);
+        if (layer == null) return;
+        if (insertionAdorner == null)
+        {
+            var brush = TryFindResource("Accent.PrimaryBrush") as Brush ?? Brushes.DodgerBlue;
+            insertionAdorner = new InsertionAdorner(LiveTileItems, brush);
+            layer.Add(insertionAdorner);
+        }
+        insertionAdorner.Marker = marker;
+        insertionAdorner.InvalidateVisual();
+    }
+
+    private void RemoveInsertionAdorner()
+    {
+        if (insertionAdorner == null) return;
+        AdornerLayer.GetAdornerLayer(LiveTileItems)?.Remove(insertionAdorner);
+        insertionAdorner = null;
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? d) where T : DependencyObject
+    {
+        while (d != null && d is not T) d = VisualTreeHelper.GetParent(d);
+        return d as T;
+    }
+
+    // A non-hit-testable adorner that paints a single vertical accent bar at
+    // the snap position between two tiles during a drag-reorder.
+    private sealed class InsertionAdorner : Adorner
+    {
+        private readonly Brush brush;
+        public Rect Marker { get; set; }
+
+        public InsertionAdorner(UIElement adornedElement, Brush brush) : base(adornedElement)
+        {
+            this.brush = brush;
+            IsHitTestVisible = false;
+        }
+
+        protected override void OnRender(DrawingContext drawingContext)
+        {
+            if (Marker.IsEmpty) return;
+            var pen = new Pen(brush, 2.5)
+            {
+                StartLineCap = PenLineCap.Round,
+                EndLineCap = PenLineCap.Round,
+            };
+            drawingContext.DrawLine(pen,
+                new Point(Marker.X, Marker.Top),
+                new Point(Marker.X, Marker.Top + Marker.Height));
+        }
+    }
 }

@@ -209,7 +209,7 @@ public static class SegmentReader
             case AddressExpression.CheckWordRef cw:
                 return anchors.TryGetValue(cw.CheckWord, out var anchor)
                     ? anchor + cw.Offset
-                    : (int?)null;
+                    : null;
 
             case AddressExpression.Indirect ind:
                 if (ind.PointerAt < 0 || ind.PointerAt + ind.PointerSize > bin.Length) return null;

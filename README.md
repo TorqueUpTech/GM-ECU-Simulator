@@ -86,7 +86,7 @@ Either click **J2534 -> Register as J2534 device...** in the app's menu bar (UAC
 
 ![1.00](docs/screenshots/j2534-menu.png)
 
-**Both bitnesses are required.** A Windows process can only `LoadLibrary` a DLL of its own bitness - 64-bit hosts load `PassThruShim64.dll`, 32-bit hosts load `PassThruShim32.dll`, never mixed. `Register.ps1` writes both registry views, each pointing at the matching shim. The titlebar pill in the app reflects the current state ("Registered (32-bit + 64-bit)" / "Not registered") after every Register / Unregister click.
+**Both bitnesses are required.** A Windows process can only `LoadLibrary` a DLL of its own bitness - 64-bit hosts load `PassThruShim64.dll`, 32-bit hosts load `PassThruShim32.dll`, never mixed. `Register.ps1` writes both registry views, each pointing at the matching shim. The titlebar pill in the app reflects the current state ("Shim Registered" when both bitnesses are present / "32-bit Shim Fault" or "64-bit Shim Fault" when only one bitness is registered / "Shim Not Registered" when neither is) after every Register / Unregister click.
 
 **Diagnostic dialog:** **J2534 -> Show registered devices...** runs `Installer\List.ps1` (read-only, no elevation) and shows every J2534 device on the machine across both registry views, with DLL existence checks. Useful for verifying what changed and for triaging "device doesn't show in host" reports.
 

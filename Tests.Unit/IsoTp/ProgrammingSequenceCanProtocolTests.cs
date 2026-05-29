@@ -176,8 +176,8 @@ public class ProgrammingSequenceCanProtocolTests
         else
         {
             // Escape FF: 32-bit length in bytes 2..5.
-            total = ((int)firstData[2] << 24) | ((int)firstData[3] << 16)
-                  | ((int)firstData[4] << 8)  |       firstData[5];
+            total = (firstData[2] << 24) | (firstData[3] << 16)
+                  | (firstData[4] << 8)  |       firstData[5];
             firstChunkOffset = 6;
         }
 

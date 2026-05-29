@@ -1,7 +1,7 @@
-using System.Diagnostics;
-using System.IO.Pipes;
 using Common.Wire;
 using Core.Bus;
+using System.Diagnostics;
+using System.IO.Pipes;
 
 namespace Shim.Ipc;
 

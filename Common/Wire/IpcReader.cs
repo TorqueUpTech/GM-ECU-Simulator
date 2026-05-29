@@ -1,5 +1,5 @@
-using System.Buffers.Binary;
 using Common.PassThru;
+using System.Buffers.Binary;
 
 namespace Common.Wire;
 

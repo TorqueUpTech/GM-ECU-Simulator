@@ -14,16 +14,13 @@ namespace Common.Protocol;
 //           tester reads it with is derived deterministically as
 //           0xF000 | (Address & 0x0FFF) - see Pid.WireLookupId. The 0xF000
 //           range is GM's convention for dynamically-defined PIDs.
-//   Mode1 : OBD-II / SAE J1979 Service $01 ShowCurrentData. Pid.Address holds
-//           the 1-byte PID id in the low 8 bits (e.g. 0x000C = Engine RPM).
-//           Live values come from the row's waveform generator the same way
-//           Mode22 does - the wire-format difference is the request opcode
-//           and PID identifier length. Stub for now; dispatcher hookup lands
-//           with the dedicated Mode $01 service handler in a follow-up.
+//
+// OBD-II Mode $01 is NOT a Pid row: it is the built-in J1979 projection over the signal layer (see J1979Catalogue /
+// EcuNode.Mode1Supported / Service01Handler). The old free-form Mode1 PID row was removed in the signal-centric clean
+// break.
 public enum PidMode
 {
     Mode22 = 0,
     Mode1A = 1,
     Mode2D = 2,
-    Mode1  = 3,
 }

@@ -1,8 +1,8 @@
+using Core.Bus;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
-using Core.Bus;
 
 namespace GmEcuSimulator.ViewModels;
 

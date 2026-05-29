@@ -16,7 +16,6 @@ x86/
 TestResults/
 
 # Runtime config
-ecu_config.json
 .mcp.json
 
 # Manual build scripts (kept locally, not published)
@@ -28,6 +27,7 @@ scripts/docx_to_pdf.py
 scripts/
 tools/
 dist/
+resources/
 
 # Scratch / output
 *.cjs

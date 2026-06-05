@@ -33,7 +33,9 @@
             </Button>
         </Grid>
 
-        <!-- Footer: Import replaces this ECU's broadcast set with the picked messages. -->
+        <!-- Footer. Fresh ECU: OK imports the picked messages. ECU with existing broadcasts: OK
+             reconciles - de-ticked existing ids are removed, newly ticked ids appended, rows not in
+             this DBC left untouched. -->
         <Border DockPanel.Dock="Bottom"
                 Background="{DynamicResource Chrome.BgBrush}"
                 BorderBrush="{DynamicResource Border.SubtleBrush}"
@@ -53,6 +55,11 @@
                 <TextBlock Text="{Binding FileName}" Style="{StaticResource Text.Subtitle}"/>
                 <TextBlock Text="A DBC describes the whole bus. Pick the sending module, then choose which of its messages to broadcast."
                            Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,4,0,8"/>
+                <TextBlock Text="This ECU already has broadcasts. Ticked rows below are its existing CAN ids found in this DBC - untick one to remove it, tick a new one to add it. Rows whose id isn't in this DBC are left as they are."
+                           Style="{StaticResource Text.Caption}"
+                           Foreground="{DynamicResource Accent.PrimaryBrush}"
+                           TextWrapping="Wrap" Margin="0,0,0,8"
+                           Visibility="{Binding ReconcileMode, Converter={StaticResource BoolToVis}}"/>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>

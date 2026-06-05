@@ -486,4 +486,9 @@ public sealed class EcuNode
         lock (identifiersLock) identifierSources.Clear();
         IdentifiersChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    public override string ToString()
+    {
+        return Name;
+    }
 }

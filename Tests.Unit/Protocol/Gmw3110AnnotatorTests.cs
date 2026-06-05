@@ -58,6 +58,10 @@ public sealed class Gmw3110AnnotatorTests
     // Functional $3E TesterPresent
     [InlineData(0x101u, new byte[] { 0xFE, 0x01, 0x3E, 0x00, 0x00, 0x00, 0x00, 0x00 },
         "TesterPresent - functional")]
+    // Raw (no ISO-TP PCI) functional TesterPresent: $101 FE 3E - bare SID
+    // straight after the ext-addr byte, no Single-Frame length nibble.
+    [InlineData(0x101u, new byte[] { 0xFE, 0x3E },
+        "TesterPresent - functional")]
     // $34 RequestDownload, size=0x000C20 = 3104
     [InlineData(0x7E2u, new byte[] { 0x05, 0x34, 0x00, 0x00, 0x0C, 0x20, 0x00, 0x00 },
         "RequestDownload size=3104")]
@@ -113,5 +117,33 @@ public sealed class Gmw3110AnnotatorTests
         // $7DF uses NORMAL addressing - no $FE byte. PCI is data[0].
         var tag = Gmw3110Annotator.Annotate(0x7DF, new byte[] { 0x02, 0x3E, 0x00 });
         Assert.Equal("TesterPresent - functional", tag);
+    }
+
+    // The "Hide $3E" toolbar toggle drops frames flagged by IsTesterPresent
+    // from the live log. These cover the forms a host actually puts on the
+    // wire - the ISO-TP Single Frame and the raw bare-SID functional
+    // broadcast ($101 FE 3E in the bus log) - plus the negative cases that
+    // must NOT be hidden.
+    [Theory]
+    // Raw no-PCI functional keepalive ($101 FE 3E) - the reported case.
+    [InlineData(0x101u, new byte[] { 0xFE, 0x3E }, true)]
+    // Raw no-PCI functional positive response ($101 FE 7E).
+    [InlineData(0x101u, new byte[] { 0xFE, 0x7E }, true)]
+    // Gateway ext-addr ($FD) raw form.
+    [InlineData(0x101u, new byte[] { 0xFD, 0x3E }, true)]
+    // ISO-TP Single-Frame functional ($101 FE 01 3E).
+    [InlineData(0x101u, new byte[] { 0xFE, 0x01, 0x3E, 0x00, 0x00, 0x00, 0x00, 0x00 }, true)]
+    // Physical Single-Frame request/response.
+    [InlineData(0x7E0u, new byte[] { 0x01, 0x3E }, true)]
+    [InlineData(0x7E8u, new byte[] { 0x01, 0x7E }, true)]
+    // Not TesterPresent: $10 02 functional must stay visible.
+    [InlineData(0x101u, new byte[] { 0xFE, 0x02, 0x10, 0x02 }, false)]
+    // A genuine Flow Control frame ($30..) on a physical ID is not a TP.
+    [InlineData(0x7E8u, new byte[] { 0x30, 0x00, 0x00 }, false)]
+    // Wrong ext-addr byte on $101 - not a recognised functional frame.
+    [InlineData(0x101u, new byte[] { 0x00, 0x3E }, false)]
+    public void IsTesterPresent_ClassifiesKeepalives(uint canId, byte[] payload, bool expected)
+    {
+        Assert.Equal(expected, Gmw3110Annotator.IsTesterPresent(canId, payload));
     }
 }

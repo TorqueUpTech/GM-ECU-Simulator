@@ -107,14 +107,27 @@ public sealed class ChannelSession
         {
             uint canId = ((uint)msg.Data[0] << 24) | ((uint)msg.Data[1] << 16)
                        | ((uint)msg.Data[2] << 8)  | msg.Data[3];
+            // Log BEFORE handing the frame to the TP layer. The in-process bus
+            // cascade is synchronous and re-entrant: dispatching a First Frame
+            // into IsoChannelInbound makes the peer emit its FlowControl and
+            // the follow-on Consecutive Frames on THIS call stack, and each of
+            // those frames logs itself as it goes. If we logged after the
+            // dispatch returned, the FF would print AFTER its own CFs - the
+            // out-of-order bus log a VIN read produced (FF last instead of
+            // first). Logging first makes log order match wire order.
+            Bus?.LogRx(Id, msg.Data);
             if (IsoChannelInbound(canId, msg.Data))
-            {
-                Bus?.LogRx(Id, msg.Data);
                 return;
+            // Unmatched by any FlowControl filter: fall through to raw delivery
+            // so a stray frame stays visible (uncommon for ISO15765 - the host
+            // listening without a filter). Already logged above, so just apply
+            // the filter table and enqueue without re-logging.
+            if (ShouldDeliver(msg.Data))
+            {
+                RxQueue.Enqueue(msg);
+                RxAvailable.Release();
             }
-            // Unmatched: fall through to the raw CAN path (uncommon for
-            // ISO15765, but keeps stray frames visible if the host enabled
-            // diagnostic listening without a FlowControl filter).
+            return;
         }
 
         if (!ShouldDeliver(msg.Data))

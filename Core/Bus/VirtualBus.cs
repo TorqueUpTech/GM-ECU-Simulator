@@ -266,9 +266,9 @@ public sealed class VirtualBus
 
     public VirtualBus()
     {
-        Scheduler = new DpidScheduler(this);
-        Ticker = new TesterPresentTicker(this, Scheduler);
-        IdleSupervisor = new IdleBusSupervisor(this, Scheduler);
+        Scheduler          = new DpidScheduler(this);
+        Ticker             = new TesterPresentTicker(this, Scheduler);
+        IdleSupervisor     = new IdleBusSupervisor(this, Scheduler);
         BroadcastScheduler = new BroadcastScheduler(this);
     }
 

@@ -41,9 +41,11 @@ public abstract class GasV8Character : IEngineCharacter
             SignalId.EngineOilTemp => engineOff ? IsaSeaLevelTempC : 95,
             SignalId.BarometricPressure => baro,
 
-            // Charge / airflow. The induction curve lives in ManifoldPressureKpa; MAF follows the resulting charge.
+            // Charge / airflow. The induction curve lives in ManifoldPressureKpa; MAF and brake torque both follow the
+            // resulting charge, so the induction override cascades into all three.
             SignalId.ManifoldAbsolutePressure => map,
             SignalId.MassAirFlow => running ? op.Rpm * map * 1.5e-4 : 0,
+            SignalId.EngineTorque => running ? BrakeTorqueNm(map) : 0,
 
             // Fuel rail pressure from a manifold-referenced regulator. The regulator's spring side vents to the intake
             // manifold, so it holds a constant differential (the 4 bar base) ACROSS the injectors; the gauge pressure a
@@ -75,6 +77,27 @@ public abstract class GasV8Character : IEngineCharacter
 
             _ => 0,
         };
+    }
+
+    // Brake torque from manifold pressure - the single lever, because MAP already encodes the throttle's effect on
+    // airmass, so feeding throttle in as well would double-count it. The curve is piecewise-linear through the
+    // engine-character anchors: ~30 Nm at idle vacuum (~35 kPa), 600 Nm at an NA wide-open 100 kPa, and 1000 Nm at a
+    // boosted 200 kPa. Below idle vacuum the engine pumps against a closed throttle and makes negative (braking)
+    // torque, floored at -120 Nm; overrun fuel-cut naturally lands here because lifting the throttle collapses MAP. The
+    // two segments meet with a slight slope kink at 100 kPa because the sub-/super-atmospheric anchors imply different
+    // Nm/kPa gradients - faithful to the stated anchors. NA vs boosted is decided entirely by how high MAP climbs, so
+    // one curve serves both: the NA induction ceiling at ~101 kPa caps it near 600 Nm without any aspiration test here.
+    private static double BrakeTorqueNm(double map)
+    {
+        // Sub-atmospheric: 8.77 Nm/kPa line through (35 kPa, 30 Nm) and (100 kPa, 600 Nm), floored at the -120 Nm brake.
+        if (map <= 100.0)
+        {
+            double t = 30.0 + (map - 35.0) * (570.0 / 65.0);
+            return t < -120.0 ? -120.0 : t;
+        }
+
+        // Boost: 4.0 Nm/kPa line from (100 kPa, 600 Nm) through (200 kPa, 1000 Nm), uncapped so higher boost keeps scaling.
+        return 600.0 + (map - 100.0) * 4.0;
     }
 
     // Front (pre-cat) O2 voltage: rich/lean pegs in open loop, otherwise the 0.1-0.9 V switching that a healthy

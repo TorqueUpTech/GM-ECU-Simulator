@@ -1412,8 +1412,19 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
 
     // ---- CAN broadcast: Import DBC + Save/Load *.dbc.json ----
 
-    // Import a raw .dbc: parse, open the scoped picker (transmitter + message checklist), then replace
-    // the selected ECU's broadcast set with the chosen messages (the DBC owns the set - no merge).
+    // Import a raw .dbc: parse, open the scoped picker (transmitter + message checklist), then fold the
+    // pick into the selected ECU's broadcast set.
+    //
+    // Fresh ECU (no broadcasts yet): the picker pre-ticks the auto-mappable candidates and import
+    // replaces the (empty) set with the chosen messages.
+    //
+    // ECU that already has broadcasts: reconcile rather than replace. The picker pre-ticks the table's
+    // existing CAN ids that this DBC also defines; on OK -
+    //   * an existing id that was de-ticked  -> its row is removed,
+    //   * an existing id not present in this DBC -> its row is left untouched (it never showed),
+    //   * a newly ticked id -> appended,
+    //   * an existing id left ticked -> kept as-is (its mappings are preserved, not re-imported).
+    // The table is then sorted by CAN id.
     private void ImportDbc()
     {
         if (SetupSelectedEcu is not { } ecu) return;
@@ -1430,7 +1441,10 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         catch (Exception ex) { StatusText = $"Import DBC failed: {ex.Message}"; return; }
         PersistLastBroadcastDir(settings, dlg.FileName);
 
-        var importVm = new DbcImportViewModel(db, Path.GetFileName(dlg.FileName));
+        var existing = ecu.Model.Broadcasts.ToList();
+        var existingIds = existing.Select(b => b.CanId).ToHashSet();
+
+        var importVm = new DbcImportViewModel(db, Path.GetFileName(dlg.FileName), existing);
         var win = new Views.DbcImportWindow
         {
             DataContext = importVm,
@@ -1440,11 +1454,44 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         if (win.ShowDialog() != true) return;
 
         var incoming = importVm.BuildSelected();
-        if (incoming.Count == 0) { StatusText = "Import DBC: no messages selected"; return; }
 
-        ecu.Model.ReplaceBroadcasts(incoming);
+        if (existing.Count == 0)
+        {
+            // Fresh import - replace the empty set.
+            if (incoming.Count == 0) { StatusText = "Import DBC: no messages selected"; return; }
+            ecu.Model.ReplaceBroadcasts(incoming.OrderBy(m => m.CanId));
+            ecu.ReloadBroadcasts();
+            StatusText = $"Imported {incoming.Count} broadcast message(s)";
+            return;
+        }
+
+        // The window resolved Append vs Overwrite before it closed (it asks only when this DBC leaves
+        // orphan rows in the table; otherwise Append). Overwrite wipes the table and takes only the
+        // picks; Append reconciles.
+        if (importVm.ApplyMode == BroadcastImportMode.Overwrite)
+        {
+            if (incoming.Count == 0) { StatusText = "Import DBC: no messages selected"; return; }
+            ecu.Model.ReplaceBroadcasts(incoming.OrderBy(m => m.CanId));
+            ecu.ReloadBroadcasts();
+            StatusText = $"Import DBC: overwrote with {incoming.Count} broadcast message(s)";
+            return;
+        }
+
+        // Append/reconcile. Removals are scoped to matched ids (same id AND shape): only a de-ticked
+        // true re-import is dropped. A row the DBC doesn't define, or defines with a different shape
+        // (a collision), is never removed here. ReplaceIds carries the collision decisions the window
+        // resolved (same id, different shape -> take the import).
+        var merged = Core.Dbc.DbcImporter.Reconcile(
+            existing, importVm.MatchedIds, importVm.SelectedIds, incoming, importVm.ReplaceIds);
+
+        int added = merged.Count(m => !existingIds.Contains(m.CanId));
+        int removed = existing.Count(b => !merged.Any(m => m.CanId == b.CanId));
+        int replaced = importVm.ReplaceIds.Count;   // same id, different shape -> existing swapped for import
+        if (added == 0 && removed == 0 && replaced == 0) { StatusText = "Import DBC: no changes"; return; }
+
+        ecu.Model.ReplaceBroadcasts(merged);
         ecu.ReloadBroadcasts();
-        StatusText = $"Imported {incoming.Count} broadcast message(s)";
+        StatusText = $"Import DBC: +{added} added, -{removed} removed, ~{replaced} replaced ({merged.Count} total)";
     }
 
     // Save the selected ECU's broadcast set to a standalone *.dbc.json (a flat List<BroadcastMessageDto>),

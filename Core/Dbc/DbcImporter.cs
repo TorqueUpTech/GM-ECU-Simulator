@@ -72,6 +72,59 @@ public static class DbcImporter
     // the picker uses this to pre-tick "interesting" messages.
     public static bool HasMappableSignal(DbcMessage m) => m.Signals.Any(s => AutoMap(s) is not null);
 
+    // Fold a scoped re-import into an ECU that already has broadcasts, returning the new set (sorted
+    // by CAN id). Used when the import picker ran in reconcile mode:
+    //   * existing   - the ECU's current broadcast rows.
+    //   * matchedIds - existing ids the DBC re-defines with an IDENTICAL shape (same id + same DLC/
+    //                  signal layout) - the pre-ticked "true re-import" rows. Removals are scoped to
+    //                  THIS set: only a matched row that was de-ticked is dropped. A row whose id the
+    //                  DBC doesn't define, or defines with a different shape (a collision), is never
+    //                  removed here - it is left alone unless explicitly replaced (see replaceIds).
+    //   * selectedIds  - the ids left ticked on OK.
+    //   * incoming     - freshly converted broadcast messages for the ticked ids.
+    //   * replaceIds   - ticked ids the user chose to overwrite with the imported definition (the
+    //                    CAN-id-collision case: this DBC reuses an existing id for a differently
+    //                    shaped message). For these the existing row is dropped and the incoming one
+    //                    used; their prior mappings are intentionally discarded (they don't apply to
+    //                    a different layout). Default empty -> the pure same-shape re-import path.
+    // A matched row that was de-ticked is dropped; a matched row still ticked is kept as-is (its user
+    // mappings preserved); a ticked id new to the table is appended; a collision id is kept unless it
+    // is in replaceIds.
+    public static List<BroadcastMessage> Reconcile(
+        IReadOnlyList<BroadcastMessage> existing,
+        IReadOnlySet<uint> matchedIds,
+        IReadOnlySet<uint> selectedIds,
+        IReadOnlyList<BroadcastMessage> incoming,
+        IReadOnlySet<uint>? replaceIds = null)
+    {
+        replaceIds ??= EmptyIds;
+        var keep = existing
+            .Where(b => !(matchedIds.Contains(b.CanId) && !selectedIds.Contains(b.CanId))   // not a de-ticked match
+                        && !replaceIds.Contains(b.CanId))                                     // not being replaced
+            .ToList();
+        var keepIds = keep.Select(b => b.CanId).ToHashSet();
+        var added = incoming.Where(m => !keepIds.Contains(m.CanId));   // replaced ids fall through here -> incoming used
+        return keep.Concat(added).OrderBy(b => b.CanId).ToList();
+    }
+
+    private static readonly HashSet<uint> EmptyIds = new();
+
+    // Two broadcast messages share a "shape" when they would pack to the same wire frame: same DLC and
+    // the same signal layout (name + start bit + length + byte order), order-independent. Message name
+    // and per-signal value-source mappings are ignored - a pure rename or a remapped source is still
+    // the same frame. The import reconcile uses this to tell a true re-import of the same message
+    // (keep the existing row + its mappings) from a CAN-id collision where a different DBC reuses the
+    // id for an unrelated message (offer the user keep/replace).
+    public static bool SameShape(BroadcastMessage a, BroadcastMessage b)
+    {
+        if (a.Dlc != b.Dlc || a.Signals.Count != b.Signals.Count) return false;
+        var ak = a.Signals.Select(SignalKey).OrderBy(k => k, StringComparer.Ordinal);
+        var bk = b.Signals.Select(SignalKey).OrderBy(k => k, StringComparer.Ordinal);
+        return ak.SequenceEqual(bk);
+    }
+
+    private static string SignalKey(BroadcastSignal s) => $"{s.Name}|{s.StartBit}|{s.Length}|{(int)s.ByteOrder}";
+
     // Best-effort name/unit heuristic mapping a DBC signal to a live engine SignalId. Conservative:
     // rate-of-change / input / output / turbine variants are deliberately left unmapped so they don't
     // masquerade as the primary signal. Returns null when nothing fits (-> a constant-0 field).

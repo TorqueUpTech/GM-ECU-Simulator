@@ -86,6 +86,59 @@ public sealed class EngineCharacterTests
         }
     }
 
+    [Fact]
+    public void EngineTorque_IsZeroWithEngineOff()
+    {
+        foreach (IEngineCharacter c in new IEngineCharacter[] { new NaGasV8(), new BoostedGasV8() })
+            Assert.Equal(0.0, c.Derive(SignalId.EngineTorque, Off()), 6);
+    }
+
+    [Fact]
+    public void EngineTorque_TracksMapThroughTheStatedAnchors()
+    {
+        var na = new NaGasV8();
+
+        // The curve is a pure function of MAP: ~30 Nm at the idle-vacuum anchor (35 kPa), 600 Nm at 100 kPa, 1000 Nm
+        // at 200 kPa, floored at -120. Read MAP and torque from the same point and confirm torque sits on that line.
+        foreach (var load in new[] { 0.0, 22.0, 50.0, 80.0, 100.0 })
+        {
+            double map = na.Derive(SignalId.ManifoldAbsolutePressure, Running(load));
+            double expected = map <= 100.0
+                ? System.Math.Max(-120.0, 30.0 + (map - 35.0) * (570.0 / 65.0))
+                : 600.0 + (map - 100.0) * 4.0;
+            Assert.Equal(expected, na.Derive(SignalId.EngineTorque, Running(load)), 3);
+        }
+    }
+
+    [Fact]
+    public void EngineTorque_DeepVacuumIsNegative_AndIdleIsModestlyPositive()
+    {
+        var na = new NaGasV8();
+
+        // Throttle shut (deepest vacuum) pumps against the closed plate: braking torque, never below the -120 floor.
+        double deepVacuum = na.Derive(SignalId.EngineTorque, Running(0));
+        Assert.True(deepVacuum < 0, $"expected negative torque in deep vacuum, got {deepVacuum}");
+        Assert.True(deepVacuum >= -120.0, $"torque floor breached: {deepVacuum}");
+
+        // Idle (22% load) makes a small positive torque in the ~30 Nm neighbourhood.
+        double idle = na.Derive(SignalId.EngineTorque, Running(22));
+        Assert.InRange(idle, 20.0, 60.0);
+    }
+
+    [Fact]
+    public void EngineTorque_BoostScalesPastTheNaCeiling()
+    {
+        var na = new NaGasV8();
+        var boost = new BoostedGasV8();   // default peak boost -> MAP 210 kPa at WOT
+
+        // NA tops out near 600 Nm because its MAP can only reach barometric; boost drives MAP to 210 kPa and torque
+        // well past it with no ceiling: 600 + (210 - 100) * 4 = 1040 Nm.
+        Assert.Equal(604.0, na.Derive(SignalId.EngineTorque, Running(100)), 0);      // MAP 101 -> 600 + 1*4
+        double boosted = boost.Derive(SignalId.EngineTorque, Running(100));
+        Assert.True(boosted > na.Derive(SignalId.EngineTorque, Running(100)));
+        Assert.Equal(1040.0, boosted, 0);
+    }
+
     [Theory]
     [InlineData("na-gas-v8", typeof(NaGasV8))]
     [InlineData("boosted-gas-v8", typeof(BoostedGasV8))]

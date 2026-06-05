@@ -91,6 +91,13 @@ public static class EcuExitLogic
         if (node.Persona is UdsKernelPersona)
             node.Persona = Gmw3110Persona.Instance;
 
+        // 3d. Normal communication resumes. ClearProgrammingState above reset NormalCommunicationDisabled, so a
+        //     $28 that had silenced this node's autonomous CAN broadcast is now lifted - rebuild the emitter to
+        //     bring the broadcasts back. RebuildIfRunning re-evaluates every node and is a no-op when no host
+        //     session is emitting, so this covers all three callers ($20, the P3C timeout, and Reset ECU State)
+        //     without resurrecting traffic on an idle bus.
+        captureBus?.BroadcastScheduler.RebuildIfRunning();
+
         // 4. Send $60 positive response only when the spec demands it: caller
         //    provided a channel AND a programming session was NOT being torn
         //    down. Concluding a programming event is silent on the wire.

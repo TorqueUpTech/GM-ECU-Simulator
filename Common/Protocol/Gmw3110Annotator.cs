@@ -16,35 +16,50 @@ public static class Gmw3110Annotator
 {
     /// <summary>
     /// Lightweight classifier: true iff the frame is a TesterPresent
-    /// request ($3E) or its positive response ($7E), carried in an ISO-TP
-    /// Single Frame. FF/CF/FC and negative responses return false.
-    /// Strips the GMLAN $101 extended-addressing byte before inspecting
-    /// the PCI nibble so functional broadcasts are still recognised.
-    /// Used by VirtualBus to flag the frame so the UI log pane can drop
-    /// it without affecting the file-log capture.
+    /// request ($3E) or its positive response ($7E). Recognises both the
+    /// ISO-TP Single-Frame form ($101 FE 01 3E / 7E0 01 3E) and the raw
+    /// no-PCI functional broadcast some hosts emit ($101 FE 3E - the bare
+    /// SID straight after the extended-addressing byte, no length nibble).
+    /// FF/CF/FC and negative responses return false. Strips the GMLAN $101
+    /// extended-addressing byte before inspecting. Used by VirtualBus to
+    /// flag the frame so the UI log pane can drop it without affecting the
+    /// file-log capture.
     /// </summary>
     public static bool IsTesterPresent(uint canId, ReadOnlySpan<byte> payload)
     {
         if (payload.Length == 0) return false;
 
         int offset = 0;
+        bool functional = false;
         if (canId == GmlanCanId.AllNodesRequest)
         {
             byte ext = payload[0];
             if (ext != GmlanCanId.AllNodesExtAddr && ext != GmlanCanId.GatewayExtAddr)
                 return false;
             offset = 1;
+            functional = true;
         }
 
         if (payload.Length <= offset) return false;
+
+        // Raw (no ISO-TP PCI) functional keepalive: e.g. $101 FE 3E, the
+        // bare SID sitting directly after the extended-addressing byte with
+        // no Single-Frame length nibble. $3E/$7E are not valid PCI types on
+        // the functional channel (0x3n is Flow Control, never broadcast;
+        // 0x7n is no PCI type at all), so a direct SID match is unambiguous.
+        if (functional && IsTesterPresentSid(payload[offset]))
+            return true;
+
         byte pci = payload[offset];
         if ((pci & 0xF0) != 0x00) return false;
         int len = pci & 0x0F;
         if (len < 1 || payload.Length < offset + 1 + len) return false;
-        byte sid = payload[offset + 1];
-        return sid == Service.TesterPresent
-            || sid == Service.TesterPresent + 0x40;
+        return IsTesterPresentSid(payload[offset + 1]);
     }
+
+    private static bool IsTesterPresentSid(byte sid)
+        => sid == Service.TesterPresent
+        || sid == Service.TesterPresent + 0x40;
 
     /// <summary>
     /// Returns a short human-readable tag for the frame, or null if nothing
@@ -73,6 +88,16 @@ public static class Gmw3110Annotator
         byte pci = payload[offset];
         byte pciType = (byte)(pci & 0xF0);
         string suffix = functional ? " - functional" : "";
+
+        // Raw (no ISO-TP PCI) functional keepalive: $101 FE 3E - the bare SID
+        // with no Single-Frame length nibble. Without this it would fall into
+        // the 0x30 Flow-Control branch below and mislabel; $3E/$7E only ever
+        // appear in this bare form as TesterPresent on the functional channel.
+        if (functional && IsTesterPresentSid(pci))
+        {
+            var tag = AnnotateUsdt(payload.Slice(offset));
+            return tag == null ? null : tag + suffix;
+        }
 
         switch (pciType)
         {

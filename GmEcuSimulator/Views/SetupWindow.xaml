@@ -403,11 +403,15 @@
                                 Visibility="{Binding IsPrimed, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed, TargetNullValue=Collapsed}"
                                 ToolTip="Re-open the DPS Prime Wizard with this ECU's prior selections pre-filled. Replaces the ECU atomically on Apply."/>
                     </Grid>
-                    <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                    <!-- Pane summary line. The Save / Load PIDs buttons used to live here, but flush
+                         above the "ECU settings" form they read as acting on the ECU settings (CAN
+                         IDs, engine model, scenario) - which they don't. They now sit in the
+                         "Diagnostic PIDs" group header directly above the $1A/$22/$2D sections they
+                         actually operate on. This row is now a pure parameter-count summary. -->
+<!--                     <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="PIDs"
                                    Style="{StaticResource Text.Subtitle}"
@@ -417,36 +421,7 @@
                                    Style="{StaticResource Caption14}"
                                    VerticalAlignment="Center"
                                    Margin="12,0,0,0"/>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal">
-                            <!-- AncestorType=Window resolves the DataContext back to MainViewModel
-                                 (the Window's DataContext), bypassing the inner DataContext that
-                                 was rebased to SetupSelectedEcu for the rest of this pane.
-                                 Glyphs come from Segoe MDL2 Assets (built into Windows). -->
-                            <StackPanel.Resources>
-                                <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-                                    <Setter Property="Width" Value="36"/>
-                                    <Setter Property="Height" Value="32"/>
-                                    <Setter Property="Margin" Value="0,0,6,0"/>
-                                    <Setter Property="Padding" Value="0"/>
-                                    <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
-                                </Style>
-                            </StackPanel.Resources>
-                            <Button Style="{StaticResource IconButton}"
-                                    Command="{Binding DataContext.SavePidsCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                    ToolTip="Save this ECU's PID list (including waveform settings) to a .pids.json file.">
-                                <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
-                            </Button>
-                            <Button Style="{StaticResource IconButton}"
-                                    Margin="0"
-                                    Command="{Binding DataContext.LoadPidsCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                    ToolTip="Load a .pids.json file and replace this ECU's PID list with its contents.">
-                                <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
-                            </Button>
-                            <!-- Add / Remove moved into each mode section's header (per-section, so a new row lands in
-                                 the right mode). Save / Load here still operate on the whole PID list. -->
-                        </StackPanel>
-                    </Grid>
+                    </Grid> -->
 
                     <!-- All diagnostic modes as collapsible sections, scrolled vertically. The editable modes
                          ($1A / $22 / $2D) come from the Sections ItemsControl - one Expander + grid each, with its
@@ -454,7 +429,12 @@
                          $01 (OBD-II) section follows. There is no longer a Mode column: a row's mode is the section
                          it lives in. Together these are the whole-ECU view. -->
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel>
+                        <!-- Whole section stack is gated on an ECU being selected. The Sections ItemsControl collapses
+                             on its own when its source is empty, but the three hardcoded Expanders (ECU settings / CAN
+                             Broadcast / $01 (OBD-II)) inherit the pane's SetupSelectedEcu DataContext and would otherwise
+                             render their empty grids with no ECU picked. Binding to the DataContext itself (no Path) with
+                             ConverterParameter=NotNull collapses all of them when SetupSelectedEcu is null. -->
+                        <StackPanel Visibility="{Binding ConverterParameter=NotNull, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                             <!-- ECU settings. The Selected-ECU inspector relocated out of the main window: identity
                                  (Name), the three CAN IDs, the programming-only FC.BS / Diag addr / Sec module fields,
                                  and the live-signal Scenario with its sweep knobs. Inherits the pane's DataContext
@@ -732,6 +712,53 @@
                                 </DockPanel>
                             </Expander>
                             <Border Style="{StaticResource SectionDivider}"/>
+
+                            <!-- Group header for the diagnostic PID modes. The Save / Load PIDs buttons act on
+                                 the whole $1A/$22/$2D PID list (the *.pids.json file). It heads the diagnostic-
+                                 mode sections rather than living in the pane's top summary row, where flush above
+                                 the ECU settings form the buttons read as acting on the ECU settings. $01 is
+                                 read-only (legislated J1979 encoding), so the buttons don't touch it - hence the
+                                 "$1A / $22 / $2D" qualifier. AncestorType=Window resolves the command DataContext
+                                 back to MainViewModel, bypassing the inner SetupSelectedEcu DataContext rebased
+                                 for the rest of this pane. -->
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Diagnostic PIDs"
+                                           Style="{StaticResource Text.Subtitle}"
+                                           VerticalAlignment="Center"/>
+                                <!--<TextBlock Grid.Column="1"
+                                           Text="$1A / $22 / $2D"
+                                           Style="{StaticResource Caption14}"
+                                           VerticalAlignment="Center"
+                                           Margin="12,0,0,0"/>-->
+                                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                    <StackPanel.Resources>
+                                        <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Width" Value="36"/>
+                                            <Setter Property="Height" Value="32"/>
+                                            <Setter Property="Margin" Value="0,0,6,0"/>
+                                            <Setter Property="Padding" Value="0"/>
+                                            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                                            <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                        </Style>
+                                    </StackPanel.Resources>
+                                    <Button Style="{StaticResource IconButton}"
+                                            Command="{Binding DataContext.SavePidsCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                            ToolTip="Save this ECU's $1A/$22/$2D PID list (including waveform settings) to a .pids.json file. Does not include ECU settings or CAN broadcasts - use the sidebar's Save ECU for the whole ECU.">
+                                        <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
+                                    </Button>
+                                    <Button Style="{StaticResource IconButton}"
+                                            Margin="0"
+                                            Command="{Binding DataContext.LoadPidsCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                            ToolTip="Load a .pids.json file and replace this ECU's $1A/$22/$2D PID list with its contents.">
+                                        <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="16"/>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
 
                             <!-- Sections run lowest mode to highest: $01 first, then the editable $1A / $22 / $2D from
                                  the Sections ItemsControl. All start collapsed so a freshly-opened ECU isn't a wall of

@@ -1,6 +1,6 @@
 // Ported verbatim from `Gm Data Logger_v5_Wpf_WIP/Core/Utilities/Timers.cs`.
 // Single shared high-priority polling thread with a min-heap of pending
-// deadlines — sub-millisecond accuracy regardless of how many timers are
+// deadlines — millisecond accuracy regardless of how many timers are
 // active. Used here by DpidScheduler and TesterPresentTicker so we don't
 // need our own per-band threads.
 using System.Diagnostics;
@@ -8,7 +8,7 @@ using System.Diagnostics;
 namespace Core.Utilities;
 
 /// <summary>
-/// A software on-delay timer with sub-millisecond accuracy, supporting one-shot,
+/// A software on-delay timer with millisecond accuracy, supporting one-shot,
 /// auto-restart (endless), and auto-stop (counted-restart) modes.
 /// </summary>
 public class TimerOnDelay
@@ -63,8 +63,8 @@ public class TimerOnDelay
 
     public int AutoStopAccumulator { get; private set; }
 
-    public string DebugInstanceName { get; set; } = string.Empty;
-    public string DebugTimerName { get; set; } = string.Empty;
+    public string DebugInstanceName { get; set; }
+    public string DebugTimerName { get; set; }
     public SynchronizationContext? SyncContext { get; set; }
 
     public long IgnoreIfLateByMs { get; set; }

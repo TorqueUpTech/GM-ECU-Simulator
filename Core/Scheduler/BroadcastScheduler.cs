@@ -31,11 +31,17 @@ public sealed class BroadcastScheduler : IDisposable
         StopAll();
         var fresh = new List<Entry>();
         foreach (var node in bus.Nodes)
+        {
+            // $28 DisableNormalCommunication halts an ECU's autonomous transmission (GMW3110 §8.9): while the
+            // flag is set, that node emits no broadcast frames. It is cleared by $20 / P3C timeout / Reset ECU
+            // State via EcuExitLogic, each of which calls back here so the node's broadcasts resume.
+            if (node.State.NormalCommunicationDisabled) continue;
             foreach (var msg in node.Broadcasts)
             {
                 if (!msg.Enabled || msg.PeriodMs <= 0) continue;   // disabled / event-driven (period 0) -> not scheduled
                 fresh.Add(new Entry(node, msg, bus));
             }
+        }
 
         lock (entriesLock)
         {
@@ -85,8 +91,8 @@ public sealed class BroadcastScheduler : IDisposable
             {
                 Preset = msg.PeriodMs,
                 AutoRestart = true,
-                DebugInstanceName = $"BroadcastScheduler[{node.Name}]",
-                DebugTimerName = $"BCAST {msg.CanId:X3} @{msg.PeriodMs}ms",
+                DebugInstanceName = $"{nameof(BroadcastScheduler)}[{node.Name} 0x{msg.CanId.ToString("X3")} {msg.Name}]",
+                DebugTimerName = $"BCAST 0x{msg.CanId:X3} @{msg.PeriodMs}ms",
             };
             timer.OnTimingDone += (_, _) => Tick();
         }

@@ -18,6 +18,7 @@ public enum SignalId
     // Derived - computed from the primaries on each sample.
     ManifoldAbsolutePressure,
     MassAirFlow,
+    EngineTorque,
     FuelPressure,
     TimingAdvance,
     ControlModuleVoltage,

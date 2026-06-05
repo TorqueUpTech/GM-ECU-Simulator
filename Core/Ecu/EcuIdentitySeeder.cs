@@ -37,6 +37,8 @@ public static class EcuIdentitySeeder
         0xC0,  // Operating Software ID
         0xC1,  // End Model Part Number
         0xC2,  // Base Model Part Number
+        0xC9,  // MCP Processor Identifier 01
+        0xCA,  // MCP Processor Identifier 02
         0xCB,  // End Model Number
         0xCC,  // Base Model Number
         0xD0,  // Boot SW Alpha Code

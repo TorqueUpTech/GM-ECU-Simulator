@@ -39,6 +39,11 @@ public static class Service28Handler
 
         node.State.NormalCommunicationDisabled = true;
 
+        // Stop this ECU's autonomous CAN broadcast now that normal communication is disabled. RebuildIfRunning
+        // re-evaluates every node against its NormalCommunicationDisabled flag, so this node drops out while a
+        // host session is live (no-op when nothing is emitting). $20 / P3C timeout / Reset ECU State bring it back.
+        ch.Bus?.BroadcastScheduler.RebuildIfRunning();
+
         // Functional broadcast: respond too (§8.9.5.1 example shows N1..Nn each
         // sending a $68 SF in response to the $101 functional $28).
         node.State.Fragmenter.EnqueueResponse(ch, node.UsdtResponseCanId,

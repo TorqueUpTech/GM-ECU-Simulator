@@ -18,6 +18,7 @@ public static class SignalCatalogue
         new(SignalId.EngineLoad,                 "Engine Load",                 "%",      0, 100),
         new(SignalId.ManifoldAbsolutePressure,   "Manifold Absolute Pressure",  "kPa",    0, 255),
         new(SignalId.MassAirFlow,                "Mass Air Flow",               "g/s",    0, 655),
+        new(SignalId.EngineTorque,               "Engine Torque",               "Nm",  -120, 2000),
         new(SignalId.FuelPressure,               "Fuel Pressure",               "kPa",    0, 765),
         new(SignalId.TimingAdvance,              "Timing Advance",              "deg",  -64, 64),
         new(SignalId.ControlModuleVoltage,       "Control Module Voltage",      "V",      0, 18),

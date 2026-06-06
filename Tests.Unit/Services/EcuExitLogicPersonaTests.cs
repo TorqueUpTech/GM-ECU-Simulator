@@ -12,6 +12,7 @@ namespace EcuSimulator.Tests.Services;
 // unconditional persona reset silently reverted a loaded FordCapturePersona to
 // gmw3110 - after which the capture sink NRC'd PCMTec's Mode $09 ($7F 09 11)
 // instead of answering VIN/CalID. Regression guard for that.
+[Collection(FordCapturePersonaCollection.Name)]
 public sealed class EcuExitLogicPersonaTests
 {
     [Fact]

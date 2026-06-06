@@ -1,5 +1,6 @@
 using Common.Persistence;
 using Core.Persistence;
+using EcuSimulator.Tests.TestHelpers;
 using Xunit;
 
 namespace EcuSimulator.Tests.Persistence;
@@ -9,6 +10,7 @@ namespace EcuSimulator.Tests.Persistence;
 // auto-save dropped the field, the next launch ran with no flash backing,
 // and PCMTec popped "Unknown Vehicle / CONDITIONS_NOT_CORRECT" because $23
 // silently NRC'd $22.
+[Collection(FordCapturePersonaCollection.Name)]
 public sealed class FlashBinPathRoundTripTests
 {
     [Fact]

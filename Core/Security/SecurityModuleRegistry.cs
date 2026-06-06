@@ -89,6 +89,15 @@ public static class SecurityModuleRegistry
             () => new Gmw3110_2010_Generic(new RandomSeedCipher(5),
                                            id: "gm-bypass-5byte",
                                            behaviour: SecurityModuleBehaviour.BypassAll));
+
+        // Ford UDS accept-any-key module for the ford-capture flash path. Issues
+        // a real (non-zero) seed and accepts whatever key the tester computes -
+        // we don't have PCMTec's seed/key algorithm for this PCM, so this is the
+        // honest way to walk a Ford flash tool past $27 and into the write
+        // services. Seed width / fixed seed are set via SecurityModuleConfig.
+        // See FordUdsAcceptAnyKeyModule for the full rationale.
+        Register("ford-uds-accept-any",
+            () => new FordUdsAcceptAnyKeyModule(id: "ford-uds-accept-any"));
     }
 
     public static void Register(string id, Func<ISecurityAccessModule> factory)

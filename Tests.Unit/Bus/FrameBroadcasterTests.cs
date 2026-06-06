@@ -11,6 +11,7 @@ namespace EcuSimulator.Tests.Bus;
 //   - FordCapturePersona doesn't crash when bus.Broadcaster is null and
 //     EnsureBroadcastStarted fires (timer ticks become no-ops).
 //   - When a IFrameBroadcaster fake is wired, the broadcast tick reaches it.
+[Collection(FordCapturePersonaCollection.Name)]
 public sealed class FrameBroadcasterTests
 {
     private sealed class FakeBroadcaster : IFrameBroadcaster

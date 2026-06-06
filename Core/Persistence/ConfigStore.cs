@@ -140,6 +140,8 @@ public static class ConfigStore
         FlowControlBlockSize = node.FlowControlBlockSize,
         ProgrammedState = node.ProgrammedState,
         DiagnosticAddress = node.DiagnosticAddress,
+        FlashTransferDelayMs = node.FlashTransferDelayMs,
+        FlashEraseDelayMs = node.FlashEraseDelayMs,
         // Persist persona id only when it diverges from the default
         // (gmw3110). Saves a noisy "PersonaId": "gmw3110" line on every
         // ECU in the standard config and keeps diffs stable.
@@ -184,6 +186,8 @@ public static class ConfigStore
             FlowControlBlockSize = dto.FlowControlBlockSize,
             ProgrammedState = dto.ProgrammedState,
             DiagnosticAddress = dto.DiagnosticAddress,
+            FlashTransferDelayMs = dto.FlashTransferDelayMs,
+            FlashEraseDelayMs = dto.FlashEraseDelayMs,
         };
         node.SecurityModule = SecurityModuleRegistry.Create(dto.SecurityModuleId);
         node.SecurityModule?.LoadConfig(dto.SecurityModuleConfig);

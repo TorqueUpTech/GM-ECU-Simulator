@@ -214,6 +214,13 @@ public sealed class EcuDto
     [JsonConverter(typeof(HexByteConverter))]
     public byte DiagnosticAddress { get; set; }
 
+    // Flash-timing profile for the ford-capture flash-write path. Both default
+    // 0 = instant. FlashTransferDelayMs delays each $36 response; FlashEraseDelayMs
+    // is the modelled $B1 erase duration (driven by $7F B1 78 pending frames).
+    // See EcuNode for the full rationale. Optional; absence -> 0.
+    public int FlashTransferDelayMs { get; set; }
+    public int FlashEraseDelayMs { get; set; }
+
     public List<PidDto> Pids { get; set; } = new();
 
     // Persona / dispatch table this ECU uses for inbound USDT requests.

@@ -93,6 +93,7 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         foreach (var e in SecurityModuleConfigEntries) e.PropertyChanged += OnSecurityEntryPropertyChanged;
 
         LoadInfoFromBinCommand = new RelayCommand(LoadInfoFromBin);
+        ClearBinCommand = new RelayCommand(ClearBin, () => !string.IsNullOrEmpty(Model.FlashBinPath));
         AutoPopulateDidsCommand = new RelayCommand(AutoPopulateMissingDids);
         EditPrimeCommand = new RelayCommand(EditPrime, () => primeContext != null && bus != null);
     }
@@ -294,14 +295,47 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     // session via the Bin menu or File -> Prime from DPS archive.
 
     /// <summary>
-    /// "Load Info From Bin" command. Pops a file picker, parses the selected
-    /// .bin via <see cref="Mode1ADidBinExtractor"/>, and pushes the extracted
-    /// identity fields into <see cref="EcuNode.Identifiers"/>. ORPHAN: the Bin
-    /// menu that used to bind this was retired - kept alive (along with
-    /// <see cref="AutoPopulateDidsCommand"/>) because we'll wire it back up
-    /// when the donor-bin flow returns. Don't remove without checking.
+    /// "Load Info From Bin" command, bound to the Advanced pane's bin-picker
+    /// "Load..." button. Pops a file picker, parses the selected .bin via
+    /// <see cref="Mode1ADidBinExtractor"/>, pushes the extracted identity fields
+    /// into <see cref="EcuNode.Identifiers"/>, and records the bin as this ECU's
+    /// flash source (<see cref="FlashBinPath"/>).
     /// </summary>
     public RelayCommand LoadInfoFromBinCommand { get; }
+
+    /// <summary>Clears the recorded bin (display + flash source). Bound to the
+    /// Advanced pane's "Clear" button; disabled when no bin is set.</summary>
+    public RelayCommand ClearBinCommand { get; }
+
+    /// <summary>
+    /// Path of the .bin chosen as this ECU's flash source, backed by the
+    /// round-tripping <see cref="EcuNode.FlashBinPath"/>. Set by the bin picker;
+    /// the ford-capture persona reads the bytes to back Service $23.
+    /// </summary>
+    public string? FlashBinPath
+    {
+        get => Model.FlashBinPath;
+        set
+        {
+            if (Model.FlashBinPath == value) return;
+            Model.FlashBinPath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(BinFileDisplay));
+        }
+    }
+
+    /// <summary>Bare filename for the read-only bin textbox; full path is the tooltip.</summary>
+    public string BinFileDisplay
+        => string.IsNullOrEmpty(Model.FlashBinPath) ? "(no bin loaded)" : Path.GetFileName(Model.FlashBinPath);
+
+    // Clears the recorded bin (display + flash source). Leaves already-materialised
+    // $1A identity rows in place - they are normal editable rows once loaded.
+    private void ClearBin()
+    {
+        FlashBinPath = null;
+        if (Model.Persona.Id == "ford-capture")
+            Core.Ecu.Personas.FordCapturePersona.LoadFlashBin((byte[]?)null);
+    }
 
     private void LoadInfoFromBin()
     {
@@ -355,6 +389,14 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
+
+        // The picked bin is also this ECU's flash source: record the path (round-trips
+        // via ConfigStore.FlashBinPath) and, for the ford-capture persona, push the
+        // bytes live so $23 reads serve them this session without a config reload. Done
+        // before identity parsing so the flash source sticks even if extraction fails.
+        FlashBinPath = picker.FileName;
+        if (Model.Persona.Id == "ford-capture")
+            Core.Ecu.Personas.FordCapturePersona.LoadFlashBin(bytes);
 
         var result = Mode1ADidBinExtractor.Parse(bytes);
         if (result == null)
@@ -573,6 +615,46 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) trimmed = trimmed[2..];
         return byte.TryParse(trimmed, System.Globalization.NumberStyles.HexNumber,
                              System.Globalization.CultureInfo.InvariantCulture, out v);
+    }
+
+    /// <summary>
+    /// Per-block delay (ms) applied to every $36 TransferData response so a flash
+    /// write takes a realistic time instead of finishing in &lt;10 s. 0 = instant.
+    /// Honoured by all personas. Keep well under the tester's read timeout
+    /// (~2.5 s) - per-block pacing is the lever, not one giant delay.
+    /// </summary>
+    public int FlashTransferDelayMs
+    {
+        get => Model.FlashTransferDelayMs;
+        set
+        {
+            var v = value < 0 ? 0 : value;
+            if (Model.FlashTransferDelayMs != v)
+            {
+                Model.FlashTransferDelayMs = v;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Modelled erase duration (ms). The erase positive response is simply
+    /// deferred by this much (the ECU goes quiet then answers when done) - no
+    /// ResponsePending, which PCMTec rejects for $B1. 0 = instant. Honoured by
+    /// all personas (Ford $B1, GM SPS $31 $FF00).
+    /// </summary>
+    public int FlashEraseDelayMs
+    {
+        get => Model.FlashEraseDelayMs;
+        set
+        {
+            var v = value < 0 ? 0 : value;
+            if (Model.FlashEraseDelayMs != v)
+            {
+                Model.FlashEraseDelayMs = v;
+                OnPropertyChanged();
+            }
+        }
     }
 
     // The single "active row" across all sections. The waveform inspector and the per-ECU Remove route through this;
@@ -797,6 +879,50 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) trimmed = trimmed[2..];
         return ushort.TryParse(trimmed, System.Globalization.NumberStyles.HexNumber,
                                System.Globalization.CultureInfo.InvariantCulture, out v);
+    }
+
+    // ---------------- Persona (diagnostic dispatch table) ----------------
+
+    // Shared, immutable option set. Instance property below exposes it for the
+    // ComboBox - WPF instance-path bindings ({Binding AvailablePersonas}) don't
+    // resolve static properties, so the public surface must be an instance member.
+    private static readonly IReadOnlyList<PersonaOption> SharedPersonas = new[]
+    {
+        new PersonaOption("ford-capture", "Ford"),
+        new PersonaOption("gmw3110",      "GM Gen 4"),
+    };
+
+    /// <summary>
+    /// Diagnostic personas a user can pick for THIS ECU in the Advanced tab.
+    /// Only the two shipping dispatch tables are offered; uds-kernel is
+    /// runtime-only (Service36Handler swaps it in on a $36 sub $80 kernel
+    /// boot-load) and isn't a user-pickable choice.
+    /// </summary>
+    public IReadOnlyList<PersonaOption> AvailablePersonas => SharedPersonas;
+
+    /// <summary>
+    /// The persona this single ECU presents on the wire, bound two-way to the
+    /// Advanced-tab dropdown. Getter reflects the live Model.Persona (so a
+    /// config load with PersonaId = "ford-capture" shows "Ford"); setter swaps
+    /// the dispatch table on this ECU only and resets its security state, the
+    /// same way a security-module change does - a prior persona's unlock must
+    /// not leak into the new dispatcher. A runtime-only persona (uds-kernel)
+    /// reads back as null, leaving the dropdown blank until the user picks one.
+    /// </summary>
+    public PersonaOption? SelectedPersonaOption
+    {
+        get => AvailablePersonas.FirstOrDefault(o => o.Id == Model.Persona.Id);
+        set
+        {
+            if (value is null) return;
+            if (value.Id == Model.Persona.Id) return;
+            Model.Persona = Core.Ecu.Personas.PersonaRegistry.Resolve(value.Id);
+            OnPropertyChanged();
+            // Spec-aligned with ApplyModuleSelection: replacing the dispatch
+            // table is a fresh start, so clear any unlock / pending seed /
+            // lockout state left over from the previous persona.
+            ResetSecurityState();
+        }
     }
 
     // ---------------- Security ($27) ----------------

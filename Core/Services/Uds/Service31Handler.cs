@@ -143,6 +143,14 @@ public static class Service31Handler
                 ServiceUtil.EnqueueNrc(node, ch, sid, Nrc.RequestOutOfRange);
                 return false;
             }
+
+            // Erase positive response, deferred by the ECU's FlashEraseDelayMs
+            // (0 = immediate, identical to the generic completed response below).
+            // Models a real multi-second SPS erase. Returns here so the erase
+            // routine doesn't also fall through to the generic immediate response.
+            FlashTiming.EnqueueEraseResponse(node, ch,
+                [Service.Positive(sid), sub, idHi, idLo, 0x00]);
+            return true;
         }
 
         // $0401 CheckMemoryByAddress uses a kernel-specific response shape -

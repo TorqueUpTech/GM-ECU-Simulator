@@ -148,6 +148,24 @@ public sealed class EcuNode
     // mirror, not a second copy of the data.
     public string? FlashBinPath { get; set; }
 
+    // ---- Flash-timing profile (ford-capture flash-write path) ----
+    //
+    // A simulator answers instantly, so a flash write completes in well under
+    // 10 s; a real PCM takes 30 s+. These two knobs let the ford-capture persona
+    // model realistic timing. Both default 0 = instant (no behavioural change,
+    // tests stay fast); set them in the editor's Advanced section.
+    //
+    // FlashTransferDelayMs: delay before each $36 TransferData positive response
+    //   ($76). ~960 blocks * 30 ms ~= 30 s. Keep WELL under the tester's read
+    //   timeout (~2.5 s observed) or the host aborts with ERR_TIMEOUT - per-block
+    //   pacing is the realistic lever, not one giant delay.
+    // FlashEraseDelayMs: time the erase takes. The positive response (Ford $B1 ->
+    //   $F1, GM SPS $31 -> $71) is simply DEFERRED by this much - the ECU goes
+    //   quiet then answers when done. NOT modelled with $7F nn 78 ResponsePending:
+    //   PCMTec aborts on a pending response to the $B1 erase (observed 2026-06-06).
+    public int FlashTransferDelayMs { get; set; }
+    public int FlashEraseDelayMs { get; set; }
+
     // The diagnostic dispatch table the ECU presents on the wire RIGHT NOW.
     // Defaults to GMW3110-2010 (what every stock ECU spends its life speaking).
     // Swapped to UdsKernelPersona by Service36Handler when $36 sub $80

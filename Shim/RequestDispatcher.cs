@@ -556,7 +556,23 @@ public sealed class RequestDispatcher
 
         var begin = iso.BeginTransmit(canId, userPayload);
         if (!begin.Started || begin.Filter == null || begin.CanFrame == null)
+        {
+            // No flow-control filter registered for this request CAN ID. A
+            // single frame needs no FC handshake - only a multi-frame TX needs a
+            // filter (to know where the receiver's flow control will arrive), so
+            // send the SF directly instead of failing. This is the path for the
+            // functional TesterPresent `3E 80` PCMTec fires at $7DF during a
+            // flash write: $7DF has no filter (you don't get segmented responses
+            // on the functional broadcast ID), and rejecting it with
+            // ERR_NO_FLOW_CONTROL aborted the write mid-stream. A genuine
+            // multi-frame request with no filter still fails.
+            if (userPayload.Length <= IsoTpNormalSingleFrameMax)
+            {
+                state.Bus.DispatchHostTx(BuildNormalSingleFrame(canId, userPayload), ch);
+                return ResultCode.STATUS_NOERROR;
+            }
             return ResultCode.ERR_NO_FLOW_CONTROL;
+        }
 
         NResult? nResult;
         try
@@ -582,6 +598,25 @@ public sealed class RequestDispatcher
             NResult.N_INVALID_FS    => ResultCode.ERR_FAILED,
             _                       => ResultCode.ERR_TIMEOUT,    // null / N_ERROR / unknown
         };
+    }
+
+    // Max ISO-TP single-frame payload for Normal addressing: the SF PCI is one
+    // byte (high nibble 0 = SF, low nibble = length), leaving 7 data bytes.
+    private const int IsoTpNormalSingleFrameMax = 7;
+
+    // Build a Normal-addressing ISO-TP single frame as a bus frame:
+    // [4-byte CAN ID][SF PCI = 0x0N][payload]. The sim's reassembler reads the
+    // PCI length, so the frame is left unpadded.
+    private static byte[] BuildNormalSingleFrame(uint canId, ReadOnlySpan<byte> payload)
+    {
+        var buf = new byte[5 + payload.Length];
+        buf[0] = (byte)((canId >> 24) & 0xFF);
+        buf[1] = (byte)((canId >> 16) & 0xFF);
+        buf[2] = (byte)((canId >> 8) & 0xFF);
+        buf[3] = (byte)(canId & 0xFF);
+        buf[4] = (byte)(payload.Length & 0x0F);
+        payload.CopyTo(buf.AsSpan(5));
+        return buf;
     }
 
     private (byte, byte[]) StartFilter(ReadOnlySpan<byte> payload)

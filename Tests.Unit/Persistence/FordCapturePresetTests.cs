@@ -1,6 +1,7 @@
 using Common.Persistence;
 using Core.Ecu.Personas;
 using Core.Persistence;
+using EcuSimulator.Tests.TestHelpers;
 using Xunit;
 
 namespace EcuSimulator.Tests.Persistence;
@@ -19,6 +20,7 @@ namespace EcuSimulator.Tests.Persistence;
 // passed the range check while the PascalCase keys silently deserialised to
 // every property's default value, including Ecus=[]. The simulator then sat
 // there with zero ECUs and no on-screen indication of why. Hence this test.
+[Collection(FordCapturePersonaCollection.Name)]
 public sealed class FordCapturePresetTests
 {
     // The live preset under %LocalAppData%\GmEcuSimulator\config\ - the same

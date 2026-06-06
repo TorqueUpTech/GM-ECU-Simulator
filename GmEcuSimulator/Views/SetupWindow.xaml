@@ -1137,6 +1137,12 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                             <!-- ISO 15765-2 FlowControl BlockSize. The ECU
@@ -1155,6 +1161,23 @@
                                      FontFamily="{StaticResource Font.Mono}"
                                      ToolTip="ISO 15765-2 FlowControl BlockSize emitted on First Frame reception. 0x00 = unrestricted; 0x01 = one Consecutive Frame per FC cycle (needed by some testers, e.g. 6Speed.T43)."/>
 
+                            <!-- Persona (diagnostic dispatch table) picker for
+                                 THIS ECU. "GM Gen 4" = the GMW3110 stack;
+                                 "Ford" = the Ford-capture (PCMTec) dispatcher.
+                                 Binds EcuViewModel.SelectedPersonaOption, which
+                                 swaps Model.Persona on this ECU only and resets
+                                 its security state - it does NOT touch the other
+                                 ECUs on the bus. Persisted per-ECU via
+                                 ConfigSchema.PidDto.PersonaId. -->
+                            <Label Style="{StaticResource Label.FormPair}"
+                                   Grid.Row="1" Grid.Column="0" Content="Persona"/>
+                            <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,2"
+                                      Height="{Binding ActualHeight, ElementName=AdvancedFcBsTextBox}"
+                                      ItemsSource="{Binding AvailablePersonas}"
+                                      SelectedItem="{Binding SelectedPersonaOption}"
+                                      DisplayMemberPath="Label"
+                                      ToolTip="Diagnostic dispatch table this ECU presents on the wire. GM Gen 4 = the GMW3110 stack; Ford = the Ford-capture (PCMTec) dispatcher. Applies to this ECU only and resets its security state."/>
+
                             <!-- $27 SecurityAccess module picker. Identical
                                  wiring to the MainWindow Selected-ECU pane's
                                  "Sec module" field so a change here is
@@ -1164,23 +1187,80 @@
                                  swaps the live module + resets security state.
                                  "(none)" makes $27 return NRC $11. -->
                             <Label Style="{StaticResource Label.FormPair}"
-                                   Grid.Row="1" Grid.Column="0" Content="Sec module"/>
-                            <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,2"
+                                   Grid.Row="2" Grid.Column="0" Content="Sec module"/>
+                            <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,2"
                                       Height="{Binding ActualHeight, ElementName=AdvancedFcBsTextBox}"
                                       ItemsSource="{Binding AvailableSecurityModuleIds}"
                                       SelectedItem="{Binding SelectedSecurityModuleId}"
                                       FontFamily="{StaticResource Font.Mono}"
                                       ToolTip="Seed/key algorithm for this ECU. (none) makes $27 return NRC $11. Picking an entry rebuilds the security module and clears any prior unlock / lockout state."/>
 
-                            <!-- Import identity from a real flash readback (.bin). Picks a file, inspects/classifies
-                                 it, then prompts before overwriting this ECU's current placeholder ("sentinel")
-                                 identity - VIN, part numbers, etc. - with the values extracted from the bin. -->
-                            <Button Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
-                                    Margin="0,12,0,2"
-                                    HorizontalAlignment="Left"
-                                    Content="Load identity from bin..."
-                                    Command="{Binding LoadInfoFromBinCommand}"
-                                    ToolTip="Pick a GM ECU flash readback (.bin). The simulator inspects it and asks whether to overwrite this ECU's current placeholder identity (VIN, part numbers, ...) with the bin's values, or only fill blank fields."/>
+                            <!-- Divider splitting the diagnostic-stack knobs above from the Bin sub-section
+                                 below. Spans both columns; extra top margin opens a gap from the Sec module row. -->
+                            <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
+                                    Style="{StaticResource SectionDivider}" Margin="0,16,0,10"/>
+
+                            <!-- Bin sub-section header with its Load / Clear actions parked top-right, mirroring
+                                 the ECU picker toolbar's right-of-title placement. The buttons reuse that toolbar's
+                                 28x22 glyph pattern (Segoe MDL2 Assets) so the two rows share a control vocabulary.
+                                 The bin is both this ECU's identity source (the picker inspects the readback and
+                                 prompts before overwriting placeholder VIN / part numbers) and its flash source
+                                 (Service $23 reads, ford-capture persona). -->
+                            <Grid Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Bin"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource Text.PrimaryBrush}"
+                                           FontWeight="SemiBold" FontSize="15"/>
+                                <Button Grid.Column="1" Width="28" Height="22" Padding="0" Margin="0,0,6,0"
+                                        Command="{Binding LoadInfoFromBinCommand}"
+                                        ToolTip="Pick a GM ECU flash readback (.bin). Sets it as this ECU's identity source (prompts before overwriting $1A DIDs) and flash bin source (Service $23 reads).">
+                                    <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Button>
+                                <Button Grid.Column="2" Width="28" Height="22" Padding="0"
+                                        Command="{Binding ClearBinCommand}"
+                                        ToolTip="Forget the selected bin: clears the flash source and the name shown. Already-loaded identity DIDs are kept.">
+                                    <TextBlock Text="&#xE894;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Button>
+                            </Grid>
+
+                            <!-- Loaded-bin filename, full width across both columns. Read-only; the full path
+                                 sits in the tooltip since the display value is the filename only. -->
+                            <TextBox Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,2"
+                                     IsReadOnly="True"
+                                     Text="{Binding BinFileDisplay, Mode=OneWay}"
+                                     ToolTip="{Binding FlashBinPath}"
+                                     VerticalContentAlignment="Center"
+                                     TextAlignment="Left"
+                                     FontFamily="{StaticResource Font.Mono}"/>
+
+                            <!-- Flash-timing knobs. A simulator answers instantly (a flash finishes in
+                                 <10 s); a real PCM takes 30 s+. These let any persona model realistic
+                                 timing. Both default 0 = instant. Honoured by every flash path
+                                 (Ford-capture $B1/$36 and GM SPS $31/$36). -->
+                            <Border Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2"
+                                    Style="{StaticResource SectionDivider}" Margin="0,16,0,10"/>
+
+                            <Label Style="{StaticResource Label.FormPair}"
+                                   Grid.Row="7" Grid.Column="0" Content="Xfer ms"/>
+                            <TextBox x:Name="AdvancedFlashXferTextBox"
+                                     Grid.Row="7" Grid.Column="1" Margin="0,2"
+                                     Text="{Binding FlashTransferDelayMs, UpdateSourceTrigger=LostFocus}"
+                                     FontFamily="{StaticResource Font.Mono}"
+                                     ToolTip="Per-block delay (ms) before each $36 TransferData reply, to model real flash-program time. 0 = instant. ~30 ms over ~960 blocks gives a ~30 s write. Keep under ~2 s or the tester read-times-out."/>
+
+                            <Label Style="{StaticResource Label.FormPair}"
+                                   Grid.Row="8" Grid.Column="0" Content="Erase ms"/>
+                            <TextBox Grid.Row="8" Grid.Column="1" Margin="0,2"
+                                     Text="{Binding FlashEraseDelayMs, UpdateSourceTrigger=LostFocus}"
+                                     FontFamily="{StaticResource Font.Mono}"
+                                     ToolTip="Modelled erase time (ms). The erase positive response is simply deferred by this much - the ECU goes quiet then answers when done (no ResponsePending; PCMTec rejects a pending reply to the $B1 erase). 0 = instant."/>
                         </Grid>
                     </ScrollViewer>
                 </DockPanel>

@@ -529,16 +529,32 @@ public partial class MainWindow : Window
     // and the writer thread is live before the host can issue another J2534
     // call. Only Starts when the user has the menu toggle armed; an unchecked
     // toggle means "don't capture", regardless of host activity.
+    // True when any ECU on the bus is running the Ford-capture persona - the
+    // signal that the user wants a faithful wire log written automatically.
+    private static bool CapturePersonaActive()
+    {
+        foreach (var node in App.Bus.Nodes)
+            if (node.Persona.Id == "ford-capture") return true;
+        return false;
+    }
+
     private void OnHostSessionStarted()
     {
         lock (fileLogLifecycleLock)
         {
             hostSessionActive = true;
-            if (vm?.IsFileLoggingEnabled != true) return;
+            // The ford-capture persona exists to record a host's traffic, so the
+            // wire capture must never depend on the user having armed the "Log to
+            // file" toggle - force the complete bus_*.csv on whenever it's active.
+            // Every other persona still honours the toggle.
+            bool captureActive = CapturePersonaActive();
+            if (vm?.IsFileLoggingEnabled != true && !captureActive) return;
             if (busLogger.IsRunning) return;
             try
             {
                 busLogger.Start(Core.Bus.BusLogger.DefaultPath(), BusConfigBanner.For(App.Bus));
+                if (captureActive && vm?.IsFileLoggingEnabled != true)
+                    AppendSimLog($"[file-log] ford-capture active - auto-started wire capture: {busLogger.CurrentPath}");
             }
             catch (Exception ex)
             {

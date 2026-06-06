@@ -169,8 +169,10 @@ public static class Service36Handler
             node.Persona = UdsKernelPersona.Instance;
         }
 
-        node.State.Fragmenter.EnqueueResponse(ch, node.UsdtResponseCanId,
-            [Service.Positive(Service.TransferData)]);
+        // $76, delayed by the ECU's FlashTransferDelayMs (0 = immediate). Lets
+        // any persona model real per-block program time; default 0 keeps the
+        // synchronous behaviour every existing flow/test relies on.
+        FlashTiming.EnqueueTransferResponse(node, ch, [Service.Positive(Service.TransferData)]);
         return true;
     }
 }

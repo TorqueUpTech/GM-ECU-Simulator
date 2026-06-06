@@ -12,6 +12,7 @@ public sealed class RegistryTests
     [InlineData("gm-t43-2byte")]
     [InlineData("gm-bypass-2byte")]
     [InlineData("gm-bypass-5byte")]
+    [InlineData("ford-uds-accept-any")]
     public void BuiltInId_Resolves(string id)
     {
         var module = SecurityModuleRegistry.Create(id);
@@ -26,6 +27,7 @@ public sealed class RegistryTests
     [InlineData("gm-e67-2byte",    SecurityModuleBehaviour.Strict)]
     [InlineData("gm-e92-5byte",    SecurityModuleBehaviour.Strict)]
     [InlineData("gm-t43-2byte",    SecurityModuleBehaviour.Strict)]
+    [InlineData("ford-uds-accept-any", SecurityModuleBehaviour.BypassAll)]
     public void Behaviour_MatchesExpected(string id, SecurityModuleBehaviour expected)
     {
         var module = SecurityModuleRegistry.Create(id);

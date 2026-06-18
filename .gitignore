@@ -28,6 +28,8 @@ scripts/
 tools/
 dist/
 resources/
+# Shortcut links
+*.lnk
 
 # Scratch / output
 *.cjs

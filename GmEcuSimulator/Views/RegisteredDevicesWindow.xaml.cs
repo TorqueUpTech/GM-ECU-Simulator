@@ -11,7 +11,7 @@ public partial class RegisteredDevicesWindow : Window
     public RegisteredDevicesWindow(string output)
         : this("Registered J2534 Devices",
                "J2534 device registry",
-               "Output of Installer\\List.ps1 - every J2534 PassThru device registered on this machine, both bitnesses. Read-only diagnostic.",
+               "Output of ShimInstaller\\List.ps1 - every J2534 PassThru device registered on this machine, both bitnesses. Read-only diagnostic.",
                output)
     {
     }

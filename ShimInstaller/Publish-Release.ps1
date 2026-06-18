@@ -1,14 +1,14 @@
 # Publish-Release.ps1 - assemble a framework-dependent release bundle for a
 # GitHub release. Produces the FLAT layout Register.ps1 expects: the published
-# EXE, both native shim DLLs, and the Installer\ scripts all at the bundle root.
+# EXE, both native shim DLLs, and the ShimInstaller\ scripts all at the bundle root.
 # This is the missing automation behind the v0.2.0 shim issue - dotnet publish
 # never includes the native shims (they are a separate C++ vcxproj), so a
 # hand-zipped publish folder ships without them and Register.ps1 then fails its
 # "Required artifact missing" check.
 #
 # Usage:
-#   .\Installer\Publish-Release.ps1 -Version v0.3.0
-#   .\Installer\Publish-Release.ps1 -Version v0.3.0 -SkipBuild   # reuse existing Release binaries
+#   .\ShimInstaller\Publish-Release.ps1 -Version v0.3.0
+#   .\ShimInstaller\Publish-Release.ps1 -Version v0.3.0 -SkipBuild   # reuse existing Release binaries
 #
 # Output: <repo>\dist\GmEcuSimulator-<Version>-win-x64.zip  (dist\ is gitignored).
 # No elevation needed - this only builds and zips. Registration is Register.ps1.
@@ -23,7 +23,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Installer\ is a subdir of the repo root, so the parent of this script is root.
+# ShimInstaller\ is a subdir of the repo root, so the parent of this script is root.
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $shimProj = Join-Path $repoRoot "PassThruShim\PassThruShim.vcxproj"
 $appProj  = Join-Path $repoRoot "GmEcuSimulator\GmEcuSimulator.csproj"
@@ -65,7 +65,7 @@ $stage = Join-Path $env:TEMP ("GmEcuSim-pkg-" + $Version)
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
-# Published app (exe + deps + the Installer\ subdir the csproj copies in) lands
+# Published app (exe + deps + the ShimInstaller\ subdir the csproj copies in) lands
 # at the bundle root.
 Copy-Item (Join-Path $publish '*') -Destination $stage -Recurse -Force
 # Both native shims sit flat beside the exe - this is exactly what Register.ps1
@@ -75,7 +75,7 @@ Copy-Item $shim32 -Destination $stage -Force
 
 # --- Verify the flat layout Register.ps1 needs -----------------------------
 
-$required = 'GmEcuSimulator.exe', 'PassThruShim64.dll', 'PassThruShim32.dll', 'Installer\Register.ps1'
+$required = 'GmEcuSimulator.exe', 'PassThruShim64.dll', 'PassThruShim32.dll', 'ShimInstaller\Register.ps1'
 foreach ($r in $required) {
     if (-not (Test-Path (Join-Path $stage $r))) { throw "Bundle missing required artifact: $r" }
 }

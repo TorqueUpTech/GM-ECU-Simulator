@@ -54,7 +54,7 @@
                            Text="J2534 device registry"
                            Style="{StaticResource Text.Subtitle}"/>
                 <TextBlock x:Name="DescriptionBlock"
-                           Text="Output of Installer\List.ps1 - every J2534 PassThru device registered on this machine, both bitnesses. Read-only diagnostic."
+                           Text="Output of ShimInstaller\List.ps1 - every J2534 PassThru device registered on this machine, both bitnesses. Read-only diagnostic."
                            Style="{StaticResource Text.Caption}"
                            TextWrapping="Wrap"
                            Margin="0,4,0,0"/>

@@ -37,7 +37,7 @@ if (-not $pr.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administra
 #
 # Two supported layouts:
 #   1. Release bundle from a GitHub release - the zip is flat: the exe and
-#      both shim DLLs sit in the same folder as the Installer\ subdir.
+#      both shim DLLs sit in the same folder as the ShimInstaller\ subdir.
 #   2. Source tree - shims under PassThruShim\{x64\,}Debug, exe under
 #      GmEcuSimulator\bin\Debug\net9.0-windows.
 # Probe (1) first; fall back to (2) for developer machines.
@@ -146,7 +146,7 @@ if ($Uninstall) {
     Remove-Device $key64
     Remove-Device $key32
     Write-Host ""
-    Write-Host "Done. Run Installer\List.ps1 to confirm your other J2534 DLL entries are still present."
+    Write-Host "Done. Run ShimInstaller\List.ps1 to confirm your other J2534 DLL entries are still present."
     return
 }
 
@@ -168,4 +168,4 @@ Set-Device $key64 $shim64
 Set-Device $key32 $shim32
 Write-Host ""
 Write-Host "Done. J2534 hosts should now discover 'GM ECU Simulator' as a device."
-Write-Host "Run Installer\List.ps1 to verify the layout."
+Write-Host "Run ShimInstaller\List.ps1 to verify the layout."

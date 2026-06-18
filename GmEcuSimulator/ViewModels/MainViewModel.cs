@@ -1688,19 +1688,19 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
     private static string ScriptPath(string name)
     {
         // The EXE lives at GmEcuSimulator/bin/Debug/net9.0-windows/. The
-        // installer scripts are at <repo-root>/Installer/. Walk up looking
+        // installer scripts are at <repo-root>/ShimInstaller/. Walk up looking
         // for the marker file (GM ECU Simulator.sln) rather than hard-coding
         // ../ hops, so this still works after a publish that flattens the layout.
         var dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
         for (int i = 0; i < 10 && dir != null; i++)
         {
             var marker = Path.Combine(dir, "GM ECU Simulator.sln");
-            if (File.Exists(marker)) return Path.Combine(dir, "Installer", name);
+            if (File.Exists(marker)) return Path.Combine(dir, "ShimInstaller", name);
             dir = Path.GetDirectoryName(dir);
         }
         // Fallback: assume installer beside the EXE (deployed-flat scenario).
         var exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
-        return Path.Combine(exeDir, "Installer", name);
+        return Path.Combine(exeDir, "ShimInstaller", name);
     }
 
     // async void is only acceptable on event/command handlers - this is one.

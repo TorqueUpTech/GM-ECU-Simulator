@@ -143,7 +143,9 @@ public sealed class PidViewModel : NotifyPropertyChangedBase
     {
         get
         {
-            var full = PidCatalogue.For(Model.Mode);
+            // Persona-scoped: a Ford-persona ECU offers the Ford $22 DID dump,
+            // every other persona the GM set (PidCatalogue.For routes on the id).
+            var full = PidCatalogue.For(Model.Mode, parent.Model.Persona.Id);
             var taken = parent.IdentifiersInUse(Model.Mode, exclude: Model);
             if (taken.Count == 0) return full;
             return full.Where(e => !taken.Contains(Pid.StoreKeyFor(Model.Mode, e.Identifier))).ToList();

@@ -14,5 +14,12 @@ public sealed class PassThruMsg
     public uint ExtraDataIndex;
     public byte[] Data = [];        // Length == DataSize on the wire
 
+    // In-memory only (never marshalled across IPC): set when this frame was
+    // pushed via IFrameBroadcaster.BroadcastFrame - i.e. unsolicited broadcast
+    // traffic (DBC scheduler or a persona's UUDT stream) rather than a directed
+    // diagnostic response. Lets the UI's "Hide broadcasts" filter drop it from
+    // the live log regardless of CAN ID. Delivery to the host is unaffected.
+    public bool IsBroadcast;
+
     public uint DataSize => (uint)Data.Length;
 }

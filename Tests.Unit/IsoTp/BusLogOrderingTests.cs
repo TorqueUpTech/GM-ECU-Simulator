@@ -36,7 +36,7 @@ public class BusLogOrderingTests
         bus.AddNode(node);
 
         var log = new List<string>();
-        bus.LogFrame = (pretty, _, _) => log.Add(pretty);
+        bus.LogFrame = (pretty, _, _, _) => log.Add(pretty);
 
         var ch = new ChannelSession
         {

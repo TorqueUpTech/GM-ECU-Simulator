@@ -145,9 +145,11 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         logCollapseBulkTransfers     = appSettings.LogCollapseBulkTransfers;
         allowPeriodicTesterPresent   = appSettings.AllowPeriodicTesterPresent;
         suppressTesterPresentInWindow = appSettings.LogSuppressTesterPresentInWindow;
+        suppressBroadcastsInWindow   = appSettings.LogSuppressBroadcastsInWindow;
         MainWindow.SetIncludeJ2534FileLog(logIncludeJ2534Calls);
         MainWindow.SetIncludeBusFileLog(logIncludeBusTraffic);
         MainWindow.SetSuppressTesterPresentInWindow(suppressTesterPresentInWindow);
+        MainWindow.SetSuppressBroadcastsInWindow(suppressBroadcastsInWindow);
         bus.AnnotateFrames               = logAppendDescriptionTag;
         bus.CollapseBulkTransfers        = logCollapseBulkTransfers;
         bus.AllowPeriodicTesterPresent   = allowPeriodicTesterPresent;
@@ -421,10 +423,8 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
                 {
                     var cfg = ConfigStore.Load(path);
                     ConfigStore.ApplyTo(cfg, bus);
-                    // Backfill curated identity + live $22 seeds onto the loaded ECUs (same reason as the App startup
-                    // auto-load): the load path never seeds, so a pre-seeder config would hide the 12 signal-backed
-                    // $22 PIDs. Precedence-safe and EcuSimulator-only.
-                    if (newMode == AppMode.EcuSimulator) DefaultEcuConfig.SeedDefaults(bus);
+                    // Applied verbatim - no curated-PID re-seed. Seeding is an explicit per-ECU editor action now
+                    // (see App auto-load + EcuViewModel.SeedDefaultPids) so a deleted seed row doesn't reappear here.
                     pendingTileDescriptors = cfg.LiveTiles;
                     // Priming is DPS-only. If a persisted non-DPS config carries
                     // a stale primeArchivePath (e.g. from a pre-gating session
@@ -834,6 +834,22 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         }
     }
 
+    // "Hide broadcasts" toolbar checkbox (next to Hide $3E on the bus log tab).
+    // UI-only filter that drops configured DBC broadcast frames from the
+    // textboxes. Like Hide $3E, the file-log capture is untouched - this is a
+    // live-view readability tweak, not a stream gate.
+    private bool suppressBroadcastsInWindow;
+    public bool SuppressBroadcastsInWindow
+    {
+        get => suppressBroadcastsInWindow;
+        set
+        {
+            if (!SetField(ref suppressBroadcastsInWindow, value)) return;
+            MainWindow.SetSuppressBroadcastsInWindow(value);
+            PersistAppSettings();
+        }
+    }
+
     // ECU > "Drive HW $3E keepalives" menu item. When on, RequestDispatcher
     // creates a Timer for every PassThruStartPeriodicMsg registration so the
     // simulator ticks $3E on the host's behalf. Off accepts the registration
@@ -873,6 +889,7 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
         appSettings.LogCollapseBulkTransfers   = logCollapseBulkTransfers;
         appSettings.AllowPeriodicTesterPresent = allowPeriodicTesterPresent;
         appSettings.LogSuppressTesterPresentInWindow = suppressTesterPresentInWindow;
+        appSettings.LogSuppressBroadcastsInWindow = suppressBroadcastsInWindow;
         appSettings.Save();
     }
 
@@ -1198,10 +1215,10 @@ public sealed class MainViewModel : NotifyPropertyChangedBase
             UsdtResponseCanId = (ushort)(req + 0x008),
             UudtResponseCanId = (ushort)(req - 0x1F8),       // 0x7E0 -> 0x5E8
         };
-        // Seed the baseline identity (VIN, ...) and the curated live $22 set before the view-model is built so both
-        // the $1A and $22 editor sections are populated out of the box.
-        EcuIdentitySeeder.Seed(node);
-        EcuMode22Seeder.Seed(node);
+        // A new ECU starts with no $1A/$22 rows. Seeding the baseline identity + curated live $22 set is an explicit
+        // action now (the "Seed default PIDs" button in the editor's Diagnostic PIDs header -> EcuViewModel.SeedDefaultPids),
+        // so the user opts in rather than getting a fixed set they then have to delete. $01 (J1979) + live signals are
+        // always present regardless.
         bus.AddNode(node);
         var vm = new EcuViewModel(node);
         vm.BindBus(bus);

@@ -33,6 +33,18 @@ public sealed class VirtualBus
     public double NowMs => clock.Elapsed.TotalMilliseconds;
 
     /// <summary>
+    /// Free-running, monotonic microsecond clock shared by the WHOLE bus (all
+    /// channels, all ECUs/personas - one global time base, not per-persona).
+    /// Stamped onto every host-bound frame's <see cref="Common.PassThru.PassThruMsg.Timestamp"/>
+    /// at the single delivery chokepoint (<see cref="ChannelSession.EnqueueRx"/>)
+    /// so a J2534 host can plot a real time axis. TimeSpan.Ticks are 100 ns
+    /// units, so /10 yields microseconds. Cast to uint to match the J2534
+    /// PASSTHRU_MSG Timestamp field; the ~71.6 min 32-bit wrap is expected and
+    /// hosts handle it (the value only needs to be monotonic and in µs).
+    /// </summary>
+    public uint NowMicros => (uint)(clock.Elapsed.Ticks / 10);
+
+    /// <summary>
     /// Bootloader-capture configuration. Writes happen unconditionally when
     /// <see cref="CaptureSettings.CaptureDirectory"/> is set; null disables
     /// disk side effects (unit tests construct VirtualBus directly and
@@ -73,7 +85,15 @@ public sealed class VirtualBus
     /// IPC layer.
     /// </summary>
     public event Action? HostConnected;
-    public void RaiseHostConnected() => HostConnected?.Invoke();
+    public void RaiseHostConnected()
+    {
+        // Session-lifecycle trace. The broadcast scheduler and file-log sink
+        // arm on this event; a desync here (host actively making calls while
+        // the sim still thinks it's disconnected) silently stops broadcasts
+        // and refuses to start the file log, so make every transition visible.
+        LogJ2534?.Invoke("[session] HostConnected (PassThruOpen)");
+        HostConnected?.Invoke();
+    }
 
     /// <summary>
     /// Raised when the host's J2534 session ends. Two paths fire it:
@@ -85,7 +105,11 @@ public sealed class VirtualBus
     /// idempotent because pipe drop can follow a graceful Close.
     /// </summary>
     public event Action? HostDisconnected;
-    public void RaiseHostDisconnected() => HostDisconnected?.Invoke();
+    public void RaiseHostDisconnected()
+    {
+        LogJ2534?.Invoke("[session] HostDisconnected (PassThruClose / pipe-drop)");
+        HostDisconnected?.Invoke();
+    }
 
     /// <summary>Raised after Add/Remove/Replace mutates the ECU set.</summary>
     public event EventHandler? NodesChanged;
@@ -110,10 +134,12 @@ public sealed class VirtualBus
     /// generated for the host ("- HOST FILTERED" appended when the host's own
     /// channel filter blocked delivery). The third argument is true when the
     /// frame carries a TesterPresent request ($3E) or its positive response
-    /// ($7E) - the UI log pane can use this to suppress keepalive noise
+    /// ($7E); the fourth is true when the frame is a configured DBC broadcast
+    /// (its CAN ID matches one of an ECU's <see cref="EcuNode.Broadcasts"/>).
+    /// The UI log pane can use either flag to suppress that class of noise
     /// independently of the file-log capture. Null means no logging.
     /// </summary>
-    public Action<string, string, bool>? LogFrame { get; set; }
+    public Action<string, string, bool, bool>? LogFrame { get; set; }
 
     /// <summary>
     /// When true, every bus-frame log line is suffixed with a short
@@ -210,10 +236,17 @@ public sealed class VirtualBus
         var payload = CanFrame.Payload(frame);
         var (pretty, csv) = FormatFrame(chId, "Rx", canId, payload, hostFiltered: false);
         bool isTp = Common.Protocol.UdsAnnotator.IsTesterPresent(canId, payload);
-        EmitFrame(chId, canId, payload, pretty, csv, isTp, sink);
+        // Host-originated (Rx) frames are never DBC broadcasts - those only
+        // flow host-ward through LogRx/LogRxFiltered.
+        EmitFrame(chId, canId, payload, pretty, csv, isTp, isBroadcast: false, sink);
     }
 
-    internal void LogRx(uint chId, ReadOnlySpan<byte> frame)
+    // isBroadcast: set by the caller when this frame was delivered via the
+    // IFrameBroadcaster path (DBC scheduler OR a persona's UUDT stream, e.g.
+    // FordUdsPersona's $A0 DMR frames on 0x6A0). OR'd with the CAN-ID heuristic
+    // so a configured DBC id is still tagged even if it ever logs by another
+    // route. Either makes the UI "Hide broadcasts" filter drop the line.
+    internal void LogRx(uint chId, ReadOnlySpan<byte> frame, bool isBroadcast = false)
     {
         var sink = LogFrame;
         if (sink == null) return;
@@ -222,10 +255,10 @@ public sealed class VirtualBus
         var payload = CanFrame.Payload(frame);
         var (pretty, csv) = FormatFrame(chId, "Tx", canId, payload, hostFiltered: false);
         bool isTp = Common.Protocol.UdsAnnotator.IsTesterPresent(canId, payload);
-        EmitFrame(chId, canId, payload, pretty, csv, isTp, sink);
+        EmitFrame(chId, canId, payload, pretty, csv, isTp, isBroadcast || IsConfiguredBroadcastId(canId), sink);
     }
 
-    internal void LogRxFiltered(uint chId, ReadOnlySpan<byte> frame)
+    internal void LogRxFiltered(uint chId, ReadOnlySpan<byte> frame, bool isBroadcast = false)
     {
         var sink = LogFrame;
         if (sink == null) return;
@@ -234,7 +267,26 @@ public sealed class VirtualBus
         var payload = CanFrame.Payload(frame);
         var (pretty, csv) = FormatFrame(chId, "Tx", canId, payload, hostFiltered: true);
         bool isTp = Common.Protocol.UdsAnnotator.IsTesterPresent(canId, payload);
-        EmitFrame(chId, canId, payload, pretty, csv, isTp, sink);
+        EmitFrame(chId, canId, payload, pretty, csv, isTp, isBroadcast || IsConfiguredBroadcastId(canId), sink);
+    }
+
+    /// <summary>
+    /// True when <paramref name="canId"/> matches a DBC broadcast message
+    /// configured on any ECU (<see cref="EcuNode.Broadcasts"/>). A secondary
+    /// heuristic behind the authoritative delivery-path flag (see LogRx) - it
+    /// catches configured DBC ids; persona UUDT broadcasts (0x6A0, ...) are not
+    /// in Broadcasts and rely on the flag. Diagnostic response IDs ($7E8/$5E8)
+    /// never match.
+    /// </summary>
+    internal bool IsConfiguredBroadcastId(uint canId)
+    {
+        lock (nodesLock)
+        {
+            foreach (var n in nodes)
+                foreach (var b in n.Broadcasts)
+                    if (b.CanId == canId) return true;
+        }
+        return false;
     }
 
     // Width the byte field is padded to so annotation tags align in a column;
@@ -269,12 +321,12 @@ public sealed class VirtualBus
         return (pretty, csv);
     }
 
-    private void EmitFrame(uint chId, uint canId, ReadOnlySpan<byte> payload, string pretty, string csv, bool isTesterPresent, Action<string, string, bool> sink)
+    private void EmitFrame(uint chId, uint canId, ReadOnlySpan<byte> payload, string pretty, string csv, bool isTesterPresent, bool isBroadcast, Action<string, string, bool, bool> sink)
     {
         if (collapseBulkTransfers)
-            bulkCollapser.Process(chId, canId, payload, pretty, csv, isTesterPresent, sink);
+            bulkCollapser.Process(chId, canId, payload, pretty, csv, isTesterPresent, isBroadcast, sink);
         else
-            sink(pretty, csv, isTesterPresent);
+            sink(pretty, csv, isTesterPresent, isBroadcast);
     }
 
     private static string FormatId(uint id)
@@ -354,7 +406,7 @@ public sealed class VirtualBus
         if (node == null)
         {
             var msg = $"[bus] no ECU at {FormatId(canId)} -- frame dropped";
-            LogFrame?.Invoke(msg, msg, false);
+            LogFrame?.Invoke(msg, msg, false, false);
             return;
         }
 
@@ -470,10 +522,14 @@ public sealed class VirtualBus
             // Delegate to the ECU's currently-active persona. Default is
             // Gmw3110Persona; a successful $36 sub $80 DownloadAndExecute
             // swaps it to UdsKernelPersona. A persona returning false means
-            // "I don't recognise this SID" - the spec-correct reply for a
-            // physical request is NRC $11 ServiceNotSupported; functional
-            // broadcasts stay silent.
+            // "I don't recognise this SID" - before NRC'ing we fall through to
+            // CommonServices, the home for stack-neutral services ($22, ...)
+            // whose behaviour is identical across every persona so they aren't
+            // duplicated in (or omitted from) each persona's switch. Only if
+            // BOTH decline is a physical request NRC'd $11 ServiceNotSupported;
+            // functional broadcasts stay silent.
             if (!node.Persona.Dispatch(node, usdt, ch, isFunctional, sid, NowMs, Scheduler, stack)
+                && !Core.Ecu.Personas.CommonServices.TryHandle(node, usdt, ch, isFunctional, sid, NowMs)
                 && !isFunctional)
             {
                 ServiceUtil.EnqueueNrc(node, ch, sid, Nrc.ServiceNotSupported);

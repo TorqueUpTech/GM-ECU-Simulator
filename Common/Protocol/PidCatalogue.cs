@@ -55,15 +55,26 @@ public static class PidCatalogue
     /// library; for DIDs present in both, library metadata wins.</summary>
     public static readonly IReadOnlyList<PidCatalogueEntry> Mode1A = BuildMode1A();
 
-    /// <summary>$22 PID catalogue, sourced verbatim from the embedded library.</summary>
+    /// <summary>$22 PID catalogue, sourced verbatim from the embedded GM library.</summary>
     public static readonly IReadOnlyList<PidCatalogueEntry> Mode22 = BuildFromLibrary(PidLibrary.Mode22, PidMode.Mode22);
 
-    /// <summary>Returns the catalogue list appropriate for <paramref name="mode"/>;
-    /// empty for $2D (which is hand-rolled).</summary>
-    public static IReadOnlyList<PidCatalogueEntry> For(PidMode mode) => mode switch
+    /// <summary>$22 PID catalogue for Ford-persona ECUs, sourced verbatim from the
+    /// embedded Ford SCP/J2190 library.</summary>
+    public static readonly IReadOnlyList<PidCatalogueEntry> Mode22Ford = BuildFromLibrary(PidLibrary.Mode22Ford, PidMode.Mode22);
+
+    /// <summary>Persistence-side persona id (Core's FordUdsPersona.Id) whose $22
+    /// picker draws from the Ford library instead of the GM one.</summary>
+    private const string FordPersonaId = "ford-uds";
+
+    /// <summary>Returns the catalogue list appropriate for <paramref name="mode"/>
+    /// and the ECU's <paramref name="personaId"/>; empty for $2D (which is
+    /// hand-rolled). The $22 list is the only persona-sensitive one: a Ford
+    /// persona gets the Ford DID dump, every other persona (GM, the runtime-only
+    /// uds-kernel, or an unknown id) gets the GM set.</summary>
+    public static IReadOnlyList<PidCatalogueEntry> For(PidMode mode, string? personaId = null) => mode switch
     {
         PidMode.Mode1A => Mode1A,
-        PidMode.Mode22 => Mode22,
+        PidMode.Mode22 => personaId == FordPersonaId ? Mode22Ford : Mode22,
         _              => Array.Empty<PidCatalogueEntry>(),
     };
 

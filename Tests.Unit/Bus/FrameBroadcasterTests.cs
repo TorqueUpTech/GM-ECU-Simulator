@@ -63,10 +63,11 @@ public sealed class FrameBroadcasterTests
         FordUdsPersona.StopBroadcast();
 
         Assert.NotEmpty(fake.Frames);
-        // Each tick emits TWO frames now: one DMR-stream broadcast (0x6A0
-        // or 0x6A4 alternating, slot byte at position 4) AND one engine-bus
-        // RPM broadcast (0x97, with RPM-encoded bytes 0x0C 0x80 at positions
-        // 4-5). Split by CAN ID and assert both kinds appear.
+        // Each tick emits one engine DMR frame per bound slot on 0x6A0 in the
+        // tester's required rapid-packet format [07, E0, slot, <16-bit BE RPM>, ..]
+        // - PLUS one engine-bus RPM broadcast on 0x97. The value bytes are live
+        // (driven from the engine model) so we assert format/presence, not exact
+        // RPM values here.
         var canIdsSeen = new HashSet<(byte, byte)>();
         bool sawDmrSlot = false;
         bool sawRpm = false;
@@ -74,20 +75,140 @@ public sealed class FrameBroadcasterTests
         {
             Assert.Equal(12, f.Length);
             canIdsSeen.Add((f[2], f[3]));
-            if (f[2] == 0x06 && (f[3] == 0xA0 || f[3] == 0xA4))
+            if (f[2] == 0x06 && f[3] == 0xA0)
             {
-                Assert.Equal(0x08, f[4]); // only slot 0x08 bound
+                Assert.Equal(0x07, f[4]); // format prefix
+                Assert.Equal(0xE0, f[5]); // mandatory rapid-packet marker
+                Assert.Equal(0x08, f[6]); // slot index (only slot 0x08 bound)
                 sawDmrSlot = true;
             }
             else if (f[2] == 0x00 && f[3] == 0x97)
             {
-                Assert.Equal(0x0C, f[4]); // RPM high byte (800 rpm * 4 = 0x0C80)
-                Assert.Equal(0x80, f[5]); // RPM low byte
                 sawRpm = true;
             }
         }
-        Assert.True(sawDmrSlot, "expected DMR-stream broadcast on 0x6A0 or 0x6A4");
+        Assert.True(sawDmrSlot, "expected engine DMR broadcast on 0x6A0 with 0xE0 marker + slot 0x08");
+        Assert.False(canIdsSeen.Contains(((byte)0x06, (byte)0xA4)), "must NOT emit engine data on 0x6A4 (TCM channel)");
         Assert.True(sawRpm,     "expected engine-bus RPM broadcast on 0x97");
+    }
+
+    [Fact]
+    public void DmrValueBytes_TrackEngineRpm()
+    {
+        FordUdsPersona.StopBroadcast();
+        FordUdsPersona.ResetDmrSlotMap();
+        var bus = new VirtualBus();
+        var fake = new FakeBroadcaster();
+        bus.Broadcaster = fake;
+
+        var node = NodeFactory.CreateNode();
+        node.Persona = FordUdsPersona.Instance;
+        node.EngineModel.SetOverride(Common.Signals.SignalId.EngineRpm, 2500);  // pin RPM exactly
+        var ch = new ChannelSession { Id = 1, Protocol = ProtocolID.CAN, Baud = 500_000, Bus = bus };
+
+        byte[] a1 = { 0xA1, 0x08, 0x8C, 0x00, 0x3F, 0x86, 0xEC };               // bind slot 0x08
+        node.Persona.Dispatch(node, a1, ch, false, 0xA1, 0,
+            new Core.Scheduler.DpidScheduler(bus), Common.Protocol.DiagnosticStack.Uds);
+        ch.RxQueue.TryDequeue(out _);                                           // drain $A1 echo
+
+        byte[] a0 = { 0xA0, 0x08 };                                            // start the stream
+        node.Persona.Dispatch(node, a0, ch, false, 0xA0, 0,
+            new Core.Scheduler.DpidScheduler(bus), Common.Protocol.DiagnosticStack.Uds);
+
+        Thread.Sleep(250);
+        FordUdsPersona.StopBroadcast();
+        node.EngineModel.ClearOverride(Common.Signals.SignalId.EngineRpm);
+
+        // 2500 rpm -> DMR value = 32-bit big-endian IEEE-754 float 2500.0f = 0x451C4000;
+        // 0x97 carries rpm*4 = 10000 = 0x2710.
+        var dmr = fake.Frames.Find(f => f[2] == 0x06 && f[3] == 0xA0);
+        Assert.NotNull(dmr);
+        Assert.Equal(new byte[] { 0x45, 0x1C, 0x40, 0x00 }, new[] { dmr![7], dmr[8], dmr[9], dmr[10] });
+        var rpm97 = fake.Frames.Find(f => f[2] == 0x00 && f[3] == 0x97);
+        Assert.NotNull(rpm97);
+        Assert.Equal(0x27, rpm97![4]);
+        Assert.Equal(0x10, rpm97[5]);
+    }
+
+    [Fact]
+    public void DmrValueBytes_UseSignalMappedToSlotAddress()
+    {
+        FordUdsPersona.StopBroadcast();
+        FordUdsPersona.ResetDmrSlotMap();
+        var bus = new VirtualBus();
+        var fake = new FakeBroadcaster();
+        bus.Broadcaster = fake;
+
+        var node = NodeFactory.CreateNode();
+        node.Persona = FordUdsPersona.Instance;
+        // Map the address slot 0x08's $A1 binds (0x003F86EC) to VehicleSpeed, pinned to 120.
+        node.ReplaceDmrSignalMappings(new[]
+        {
+            new Core.Ecu.DmrSignalMapping { Address = 0x003F86EC, Signal = Common.Signals.SignalId.VehicleSpeed },
+        });
+        node.EngineModel.SetOverride(Common.Signals.SignalId.VehicleSpeed, 120);
+        var ch = new ChannelSession { Id = 1, Protocol = ProtocolID.CAN, Baud = 500_000, Bus = bus };
+
+        byte[] a1 = { 0xA1, 0x08, 0x8C, 0x00, 0x3F, 0x86, 0xEC };               // slot 0x08 -> 0x003F86EC
+        node.Persona.Dispatch(node, a1, ch, false, 0xA1, 0,
+            new Core.Scheduler.DpidScheduler(bus), Common.Protocol.DiagnosticStack.Uds);
+        ch.RxQueue.TryDequeue(out _);
+        byte[] a0 = { 0xA0, 0x08 };
+        node.Persona.Dispatch(node, a0, ch, false, 0xA0, 0,
+            new Core.Scheduler.DpidScheduler(bus), Common.Protocol.DiagnosticStack.Uds);
+
+        Thread.Sleep(250);
+        FordUdsPersona.StopBroadcast();
+        node.EngineModel.ClearOverride(Common.Signals.SignalId.VehicleSpeed);
+
+        // 120 km/h -> the slot carries VehicleSpeed (not RPM): BE float 120.0f = 0x42F00000.
+        var dmr = fake.Frames.Find(f => f[2] == 0x06 && f[3] == 0xA0);
+        Assert.NotNull(dmr);
+        Assert.Equal(new byte[] { 0x42, 0xF0, 0x00, 0x00 }, new[] { dmr![7], dmr[8], dmr[9], dmr[10] });
+    }
+
+    [Fact]
+    public void DmrValueBytes_ApplyEncodingScaleOffset()
+    {
+        FordUdsPersona.StopBroadcast();
+        FordUdsPersona.ResetDmrSlotMap();
+        var bus = new VirtualBus();
+        var fake = new FakeBroadcaster();
+        bus.Broadcaster = fake;
+
+        var node = NodeFactory.CreateNode();
+        node.Persona = FordUdsPersona.Instance;
+        // VehicleSpeed via UInt16BE with raw = speed*2 + 10.
+        node.ReplaceDmrSignalMappings(new[]
+        {
+            new Core.Ecu.DmrSignalMapping
+            {
+                Address = 0x003F86EC,
+                Signal = Common.Signals.SignalId.VehicleSpeed,
+                Encoding = Common.Signals.DmrValueEncoding.UInt16BE,
+                Scale = 2.0,
+                Offset = 10.0,
+            },
+        });
+        node.EngineModel.SetOverride(Common.Signals.SignalId.VehicleSpeed, 100);
+        var ch = new ChannelSession { Id = 1, Protocol = ProtocolID.CAN, Baud = 500_000, Bus = bus };
+
+        byte[] a1 = { 0xA1, 0x08, 0x8C, 0x00, 0x3F, 0x86, 0xEC };
+        node.Persona.Dispatch(node, a1, ch, false, 0xA1, 0,
+            new Core.Scheduler.DpidScheduler(bus), Common.Protocol.DiagnosticStack.Uds);
+        ch.RxQueue.TryDequeue(out _);
+        byte[] a0 = { 0xA0, 0x08 };
+        node.Persona.Dispatch(node, a0, ch, false, 0xA0, 0,
+            new Core.Scheduler.DpidScheduler(bus), Common.Protocol.DiagnosticStack.Uds);
+
+        Thread.Sleep(250);
+        FordUdsPersona.StopBroadcast();
+        node.EngineModel.ClearOverride(Common.Signals.SignalId.VehicleSpeed);
+
+        // raw = 100*2 + 10 = 210 = 0x00D2 (UInt16BE) -> frame[7..8] = 00 D2, frame[9..10] = 0.
+        var dmr = fake.Frames.Find(f => f[2] == 0x06 && f[3] == 0xA0);
+        Assert.NotNull(dmr);
+        Assert.Equal(new byte[] { 0x00, 0xD2, 0x00, 0x00 }, new[] { dmr![7], dmr[8], dmr[9], dmr[10] });
     }
 
     [Fact]

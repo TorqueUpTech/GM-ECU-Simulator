@@ -34,6 +34,8 @@ public static class PidLibrary
         new(() => LoadResource("Common.Pids.Mode1ALibrary.bin"));
     private static readonly Lazy<IReadOnlyDictionary<ushort, PidLibraryEntry>> mode22 =
         new(() => LoadResource("Common.Pids.Mode22Library.bin"));
+    private static readonly Lazy<IReadOnlyDictionary<ushort, PidLibraryEntry>> mode22Ford =
+        new(() => LoadResource("Common.Pids.Mode22LibraryFord.bin"));
 
     /// <summary>OBD-II Service $01 PID catalogue, keyed by 1-byte PID id.</summary>
     public static IReadOnlyDictionary<ushort, PidLibraryEntry> Mode01 => mode01.Value;
@@ -43,6 +45,11 @@ public static class PidLibrary
 
     /// <summary>GMW3110 Service $22 PID catalogue, keyed by 2-byte PID id.</summary>
     public static IReadOnlyDictionary<ushort, PidLibraryEntry> Mode22 => mode22.Value;
+
+    /// <summary>Ford UDS Service $22 PID catalogue (the SCP/J2190 DID dump),
+    /// keyed by 2-byte PID id. Offered to the editor's Identifier picker when an
+    /// ECU runs the Ford persona instead of the GM <see cref="Mode22"/> set.</summary>
+    public static IReadOnlyDictionary<ushort, PidLibraryEntry> Mode22Ford => mode22Ford.Value;
 
     private static IReadOnlyDictionary<ushort, PidLibraryEntry> LoadResource(string resourceName)
     {

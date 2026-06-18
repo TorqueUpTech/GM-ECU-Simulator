@@ -39,6 +39,13 @@ public partial class MainWindow : Window
     // complete and exactly reflect what hit the bus.
     private static volatile bool suppressTesterPresentInWindow;
 
+    // UI-only filter: when on, configured DBC broadcast frames (0x12D, 0x207,
+    // ... - the periodic ~16 ms background traffic) are skipped at
+    // AppendBusFrame's textbox path so the bus log isn't drowned by the
+    // broadcast flood. Same contract as Hide $3E: the file log path runs
+    // first and is untouched, so captures stay complete.
+    private static volatile bool suppressBroadcastsInWindow;
+
     // Worker threads (IPC pipe, DPID scheduler, etc.) enqueue formatted log
     // lines here; the UI-thread logDrainTimer drains the queue at ~30 Hz,
     // batches everything per-TextBox into one AppendText call, and ScrollToEnd
@@ -245,17 +252,19 @@ public partial class MainWindow : Window
     //   csv    - comma-separated for the file; BusLogger prefixes
     //            [timestamp],[CAN], before the disk write
     //            e.g. "[06:12:34.567],[CAN],[chan 1],Rx,7E2 02 10 02,..."
-    public static void AppendBusFrame(string pretty, string csv, bool isTesterPresent)
+    public static void AppendBusFrame(string pretty, string csv, bool isTesterPresent, bool isBroadcast)
     {
-        // File-log path is unconditional - the suppress toggle is a UI-only
-        // filter so disk captures stay complete and reviewable.
+        // File-log path is unconditional - the suppress toggles are UI-only
+        // filters so disk captures stay complete and reviewable.
         busLogger.WriteCan(csv);
 
         if (!logTraffic) return;
         // UI suppression: when the user has "Hide $3E" on, drop $3E requests
-        // and $7E positive responses from the textboxes only. File capture
-        // above already ran, so the disk record still has every frame.
+        // and $7E positive responses from the textboxes only; when "Hide
+        // broadcasts" is on, drop the periodic DBC broadcast frames. File
+        // capture above already ran, so the disk record still has every frame.
         if (isTesterPresent && suppressTesterPresentInWindow) return;
+        if (isBroadcast && suppressBroadcastsInWindow) return;
         Append(instance?.LogBox, pretty);
     }
 
@@ -275,6 +284,8 @@ public partial class MainWindow : Window
     public static void SetIncludeBusFileLog(bool enabled) => busLogger.IncludeCan = enabled;
     public static void SetSuppressTesterPresentInWindow(bool enabled)
         => suppressTesterPresentInWindow = enabled;
+    public static void SetSuppressBroadcastsInWindow(bool enabled)
+        => suppressBroadcastsInWindow = enabled;
 
     // Same shape for the "Maximize" toggle - shared between Bus log and
     // Download tab toolbars via MainViewModel.IsMaximized. Forwards to the
@@ -528,33 +539,23 @@ public partial class MainWindow : Window
     // the dispatcher returns STATUS_NOERROR to the host - so the file is open
     // and the writer thread is live before the host can issue another J2534
     // call. Only Starts when the user has the menu toggle armed; an unchecked
-    // toggle means "don't capture", regardless of host activity.
-    // True when any ECU on the bus is running the Ford UDS persona - the
-    // signal that the user wants a faithful wire log written automatically.
-    private static bool CapturePersonaActive()
-    {
-        foreach (var node in App.Bus.Nodes)
-            if (node.Persona.Id == "ford-uds") return true;
-        return false;
-    }
-
+    // toggle means "don't capture", regardless of host activity or persona.
     private void OnHostSessionStarted()
     {
         lock (fileLogLifecycleLock)
         {
             hostSessionActive = true;
-            // The ford-uds persona exists to record a host's traffic, so the
-            // wire capture must never depend on the user having armed the "Log to
-            // file" toggle - force the complete bus_*.csv on whenever it's active.
-            // Every other persona still honours the toggle.
-            bool captureActive = CapturePersonaActive();
-            if (vm?.IsFileLoggingEnabled != true && !captureActive) return;
+            // The "Log to file" toggle is authoritative for every persona,
+            // including Ford UDS: no host activity or persona forces a capture
+            // when the user has the toggle off. (The ford-uds persona used to
+            // auto-start a wire capture here irrespective of the toggle; that
+            // override was removed so the menu state always matches what's
+            // written.)
+            if (vm?.IsFileLoggingEnabled != true) return;
             if (busLogger.IsRunning) return;
             try
             {
                 busLogger.Start(Core.Bus.BusLogger.DefaultPath(), BusConfigBanner.For(App.Bus));
-                if (captureActive && vm?.IsFileLoggingEnabled != true)
-                    AppendSimLog($"[file-log] ford-uds active - auto-started wire capture: {busLogger.CurrentPath}");
             }
             catch (Exception ex)
             {

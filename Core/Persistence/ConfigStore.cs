@@ -172,6 +172,10 @@ public static class ConfigStore
         Broadcasts = node.Broadcasts.Count > 0
             ? node.Broadcasts.Select(BroadcastMessageDtoFrom).ToList()
             : null,
+        // Persist the Ford DMR signal map only when non-empty.
+        DmrSignalMappings = node.DmrSignalMappings.Count > 0
+            ? node.DmrSignalMappings.Select(DmrSignalMappingDtoFrom).ToList()
+            : null,
     };
 
     public static EcuNode EcuNodeFrom(EcuDto dto)
@@ -214,6 +218,9 @@ public static class ConfigStore
         // Restore the DBC broadcast set (absent -> none).
         if (dto.Broadcasts is { } broadcasts)
             node.ReplaceBroadcasts(broadcasts.Select(BroadcastMessageFrom));
+        // Restore the Ford DMR signal map (absent -> none).
+        if (dto.DmrSignalMappings is { } dmrMaps)
+            node.ReplaceDmrSignalMappings(dmrMaps.Select(DmrSignalMappingFrom));
         // AccelDecelSweep timing is fixed at SweepProfile.Default (the EngineModel's field initializer) - no per-ECU
         // override is read from config. Old configs carrying the retired Sweep* fields load fine; the values are ignored.
         // Restore the engine character (absent / unknown -> the NA default via the registry's fallback).
@@ -303,6 +310,26 @@ public static class ConfigStore
         PeriodMs = msg.PeriodMs,
         Enabled = msg.Enabled,
         Signals = msg.Signals.Select(BroadcastSignalDtoFrom).ToList(),
+    };
+
+    public static DmrSignalMapping DmrSignalMappingFrom(DmrSignalMappingDto dto) => new()
+    {
+        Address = dto.Address,
+        Name = dto.Name,
+        Signal = dto.Signal,
+        Encoding = dto.Encoding,
+        Scale = dto.Scale,
+        Offset = dto.Offset,
+    };
+
+    public static DmrSignalMappingDto DmrSignalMappingDtoFrom(DmrSignalMapping m) => new()
+    {
+        Address = m.Address,
+        Name = m.Name,
+        Signal = m.Signal,
+        Encoding = m.Encoding,
+        Scale = m.Scale,
+        Offset = m.Offset,
     };
 
     private static BroadcastSignal BroadcastSignalFrom(BroadcastSignalDto dto) => new()

@@ -694,6 +694,12 @@
                                               VerticalAlignment="Center"
                                               IsChecked="{Binding SuppressTesterPresentInWindow, Mode=TwoWay}"
                                               ToolTip="Hide TesterPresent keepalives ($3E requests and $7E positive responses) from this log window only. The file-log capture is not affected."/>
+                                    <CheckBox x:Name="HideBroadcastsCheck"
+                                              Content="Hide broadcasts"
+                                              Margin="12,0,0,0"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding SuppressBroadcastsInWindow, Mode=TwoWay}"
+                                              ToolTip="Hide the periodic DBC broadcast frames (0x12D, 0x207, ...) from this log window only. The file-log capture is not affected."/>
                                 </StackPanel>
                             </Border>
                             <Grid>

@@ -422,6 +422,57 @@ public sealed class EcuNode
     /// signal mapping, ...) so the scheduler can rebuild its timers.</summary>
     public void RaiseBroadcastsChanged() => BroadcastsChanged?.Invoke(this, EventArgs.Empty);
 
+    // ---- DMR address -> engine signal map (Ford persona only) -----------------------------------
+    // Pre-wired map from a DMR RAM address to a live engine SignalId, used by FordUdsPersona's
+    // 0x6A0 broadcast loop to drive each datalog slot's value. Lock-guarded with a change event,
+    // mirroring the broadcast/PID stores. Only the Ford UDS persona consults it.
+    private readonly List<DmrSignalMapping> dmrSignalMappings = new();
+    private readonly Lock dmrSignalMapLock = new();
+
+    /// <summary>Raised after a DMR signal mapping is added, removed, replaced, or edited.</summary>
+    public event EventHandler? DmrSignalMappingsChanged;
+
+    /// <summary>Snapshot copy - safe to enumerate cross-thread (the broadcast tick).</summary>
+    public IReadOnlyList<DmrSignalMapping> DmrSignalMappings
+    {
+        get { lock (dmrSignalMapLock) return dmrSignalMappings.ToArray(); }
+    }
+
+    public void AddDmrSignalMapping(DmrSignalMapping m)
+    {
+        lock (dmrSignalMapLock) dmrSignalMappings.Add(m);
+        DmrSignalMappingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public bool RemoveDmrSignalMapping(DmrSignalMapping m)
+    {
+        bool removed;
+        lock (dmrSignalMapLock) removed = dmrSignalMappings.Remove(m);
+        if (removed) DmrSignalMappingsChanged?.Invoke(this, EventArgs.Empty);
+        return removed;
+    }
+
+    public void ReplaceDmrSignalMappings(IEnumerable<DmrSignalMapping> mappings)
+    {
+        lock (dmrSignalMapLock) { dmrSignalMappings.Clear(); dmrSignalMappings.AddRange(mappings); }
+        DmrSignalMappingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void RaiseDmrSignalMappingsChanged() => DmrSignalMappingsChanged?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>The full mapping for <paramref name="address"/>, or null if unmapped. Called from the
+    /// broadcast tick, so it reads under the lock without allocating a snapshot.</summary>
+    public DmrSignalMapping? DmrMappingFor(uint address)
+    {
+        lock (dmrSignalMapLock)
+            foreach (var m in dmrSignalMappings)
+                if (m.Address == address) return m;
+        return null;
+    }
+
+    /// <summary>The engine signal mapped to <paramref name="address"/>, or null if unmapped.</summary>
+    public Common.Signals.SignalId? DmrSignalFor(uint address) => DmrMappingFor(address)?.Signal;
+
     /// <summary>Snapshot copy of the identifier map - safe to enumerate cross-thread.</summary>
     public IReadOnlyDictionary<byte, byte[]> Identifiers
     {

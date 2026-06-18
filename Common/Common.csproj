@@ -19,6 +19,7 @@
     <EmbeddedResource Include="Pids\Mode01Library.bin" />
     <EmbeddedResource Include="Pids\Mode1ALibrary.bin" />
     <EmbeddedResource Include="Pids\Mode22Library.bin" />
+    <EmbeddedResource Include="Pids\Mode22LibraryFord.bin" />
   </ItemGroup>
 
 </Project>

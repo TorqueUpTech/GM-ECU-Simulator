@@ -75,7 +75,7 @@ public partial class App : Application
         // by the "Log frame traffic" checkbox so DPID Fast-band streams don't
         // flood the textbox when nobody's watching. Two formats are delivered:
         // pretty (space-delimited) for the textbox, csv for the file.
-        bus.LogFrame = (pretty, csv, isTp) => GmEcuSimulator.MainWindow.AppendBusFrame(pretty, csv, isTp);
+        bus.LogFrame = (pretty, csv, isTp, isBcast) => GmEcuSimulator.MainWindow.AppendBusFrame(pretty, csv, isTp, isBcast);
 
         // Always-on diagnostic sinks. LogJ2534 handles events emitted from
         // the Shim/ project (PassThru* IPC narration, pipe lifecycle,
@@ -112,11 +112,11 @@ public partial class App : Application
                 {
                     var cfg = ConfigStore.Load(path);
                     ConfigStore.ApplyTo(cfg, bus);
-                    // Backfill the curated identity + live $22 seed set onto the loaded ECUs. The load path rebuilds
-                    // ECUs verbatim from the file and (unlike Add ECU / first-run defaults) never seeds, so a config
-                    // saved before the curated $22 set existed shows none of the 12 signal-backed $22 PIDs. SeedDefaults
-                    // is precedence-safe (existing DIDs win, primed ECUs skipped), so it only fills the gaps.
-                    if (mode == AppMode.EcuSimulator) DefaultEcuConfig.SeedDefaults(bus);
+                    // The loaded config is applied verbatim - no curated-PID re-seed. Seeding the default identity +
+                    // live $22 set used to run here on every launch to self-heal pre-seeder configs, but it also
+                    // resurrected any seeded row the user had deliberately deleted (it only ever filled gaps, so a
+                    // deletion looked like a gap). Seeding is now an explicit per-ECU action in the editor's
+                    // "Diagnostic PIDs" header (EcuViewModel.SeedDefaultPids), so a saved deletion stays deleted.
                     if (cfg.BinReplay != null)
                     {
                         replay.LoopMode = cfg.BinReplay.LoopMode;

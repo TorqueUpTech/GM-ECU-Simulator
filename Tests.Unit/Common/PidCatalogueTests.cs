@@ -43,6 +43,32 @@ public sealed class PidCatalogueTests
     }
 
     [Fact]
+    public void Mode22Ford_Catalogue_Matches_Ford_Library_And_Differs_From_Gm()
+    {
+        Assert.Equal(PidLibrary.Mode22Ford.Count, PidCatalogue.Mode22Ford.Count);
+        Assert.All(PidCatalogue.Mode22Ford, e => Assert.Equal(PidMode.Mode22, e.Mode));
+        // The Ford SCP dump and the GM A2L set are distinct sources; if they
+        // ever collapse to the same list, the persona split has silently broken.
+        Assert.NotEqual(PidCatalogue.Mode22, PidCatalogue.Mode22Ford);
+
+        // PID 0x000C: Ford symbol "N", Engine Speed, 2-byte. Pins that the
+        // Ford-specific rows (not the GM ones) are what loaded.
+        var rpm = PidCatalogue.Mode22Ford.Single(e => e.Identifier == 0x000C);
+        Assert.Equal("Engine Speed", rpm.Name);
+        Assert.Equal(PidSize.Word, rpm.Size);
+    }
+
+    [Fact]
+    public void For_Routes_Mode22_By_Persona_Id()
+    {
+        // ford-uds -> Ford library; GM / runtime-only kernel / unknown -> GM.
+        Assert.Same(PidCatalogue.Mode22Ford, PidCatalogue.For(PidMode.Mode22, "ford-uds"));
+        Assert.Same(PidCatalogue.Mode22, PidCatalogue.For(PidMode.Mode22, "gmw3110"));
+        Assert.Same(PidCatalogue.Mode22, PidCatalogue.For(PidMode.Mode22, "uds-kernel"));
+        Assert.Same(PidCatalogue.Mode22, PidCatalogue.For(PidMode.Mode22, null));
+    }
+
+    [Fact]
     public void Mode1A_Catalogue_Unions_Spec_Dids_With_Library()
     {
         // Every GMW3110 spec DID must be reachable from the catalogue, even

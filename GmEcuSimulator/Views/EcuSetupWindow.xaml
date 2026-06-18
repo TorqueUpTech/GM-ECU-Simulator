@@ -711,6 +711,77 @@
                                     </DataGrid>
                                 </DockPanel>
                             </Expander>
+
+                            <!-- DMR signal map. Ford UDS persona only: wires each DMR RAM address PCMTec
+                                 binds via $A1 to a live engine signal so the 0x6A0 datalog stream carries
+                                 real values. Hidden for non-Ford ECUs. -->
+                            <Expander Header="DMR Signal Map" HeaderTemplate="{StaticResource ModeSectionHeader}"
+                                      IsExpanded="False" Margin="0,0,0,10"
+                                      Visibility="{Binding IsFordUdsPersona, Converter={StaticResource BoolToVis}}">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"
+                                               Text="Map a DMR RAM address (the value PCMTec reads back during a datalog) to an engine-simulator signal. The Ford persona writes the mapped signal as a big-endian float into that slot's 0x6A0 stream; unmapped addresses default to Engine RPM."/>
+                                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal"
+                                                HorizontalAlignment="Right" Margin="0,0,0,6">
+                                        <Button Width="30" Height="26" Padding="0" Margin="0,0,6,0"
+                                                Command="{Binding AddDmrMappingCommand}"
+                                                ToolTip="Add a DMR address -> signal mapping.">
+                                            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Button>
+                                        <Button Width="30" Height="26" Padding="0"
+                                                Command="{Binding RemoveDmrMappingCommand}"
+                                                ToolTip="Remove the selected mapping.">
+                                            <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Button>
+                                    </StackPanel>
+
+                                    <DataGrid ItemsSource="{Binding DmrSignalMappings}"
+                                              SelectedItem="{Binding SelectedDmrMapping}"
+                                              AutoGenerateColumns="False"
+                                              CanUserAddRows="False"
+                                              CanUserDeleteRows="False"
+                                              CanUserSortColumns="False"
+                                              FontSize="14"
+                                              HeadersVisibility="Column"
+                                              GridLinesVisibility="Horizontal"
+                                              MaxHeight="320">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="DMR Address" Width="120"
+                                                                Binding="{Binding AddressHex, UpdateSourceTrigger=LostFocus}"
+                                                                FontFamily="{StaticResource Font.Mono}"/>
+                                            <DataGridTextColumn Header="Name" Width="*" MinWidth="90"
+                                                                Binding="{Binding Name, UpdateSourceTrigger=LostFocus}"/>
+                                            <DataGridTemplateColumn Header="Engine Signal" Width="180">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding SignalOptions}"
+                                                                  DisplayMemberPath="Name"
+                                                                  SelectedItem="{Binding SelectedSignal, UpdateSourceTrigger=PropertyChanged}"
+                                                                  BorderThickness="0" Background="Transparent"
+                                                                  VerticalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="Encoding" Width="110">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding EncodingOptions}"
+                                                                  SelectedItem="{Binding SelectedEncoding, UpdateSourceTrigger=PropertyChanged}"
+                                                                  BorderThickness="0" Background="Transparent"
+                                                                  VerticalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="Scale" Width="70"
+                                                                Binding="{Binding Scale, StringFormat=G, UpdateSourceTrigger=LostFocus}"/>
+                                            <DataGridTextColumn Header="Offset" Width="70"
+                                                                Binding="{Binding Offset, StringFormat=G, UpdateSourceTrigger=LostFocus}"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Expander>
                             <Border Style="{StaticResource SectionDivider}"/>
 
                             <!-- Group header for the diagnostic PID modes. The Save / Load PIDs buttons act on
@@ -746,6 +817,17 @@
                                             <Setter Property="VerticalContentAlignment" Value="Center"/>
                                         </Style>
                                     </StackPanel.Resources>
+                                    <!-- Explicit, opt-in seeding of the curated default PID set (baseline $1A identity +
+                                         the 13 live $22 PIDs) onto the selected ECU. Binds to the pane's SetupSelectedEcu
+                                         DataContext (an EcuViewModel), unlike the Save/Load buttons which reach the
+                                         MainViewModel via AncestorType=Window. Seeding is no longer automatic on Add ECU
+                                         or config load, so deleted rows stay deleted; this button is how the user (re)adds
+                                         the curated set. Non-destructive: existing DIDs are never overwritten. -->
+                                    <Button Padding="10,4" Margin="0,0,6,0"
+                                            VerticalAlignment="Center"
+                                            Command="{Binding SeedDefaultPidsCommand}"
+                                            Content="Seed default PIDs"
+                                            ToolTip="Add the curated default PID set (baseline $1A identity DIDs + the 13 live $22 PIDs) to this ECU. Opt-in: seeding no longer happens automatically, so deleted rows do not reappear on reload. Existing rows are never overwritten; disabled for DPS-primed ECUs."/>
                                     <Button Style="{StaticResource IconButton}"
                                             Command="{Binding DataContext.SavePidsCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                                             ToolTip="Save this ECU's $1A/$22/$2D PID list (including waveform settings) to a .pids.json file. Does not include ECU settings or CAN broadcasts - use the sidebar's Save ECU for the whole ECU.">

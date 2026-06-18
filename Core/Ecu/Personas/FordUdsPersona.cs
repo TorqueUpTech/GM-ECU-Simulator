@@ -212,43 +212,41 @@ public sealed class FordUdsPersona : IDiagnosticPersona
 
     // ---- Service $A0 UUDT broadcast loop ----
     //
-    // PCMTec installs a PASS_FILTER for CAN ID 0x6A0/0x6A1 on a different
-    // J2534 channel from the diag channel right after sending the first $A0,
-    // then sits and waits for data. Without an actual stream on that ID,
-    // PCMTec ~3s later sends $3E TesterPresent, then ~3s later still it
-    // tears down the channel and reconnects from scratch.
+    // After the first $A0, PCMTec opens a raw-CAN listener channel and waits
+    // for the rapid-packet DMR stream. We spawn a single 100ms AutoRestart
+    // timer; each tick emits one engine DMR frame per bound slot.
     //
-    // Phase 6 spawns a single 100ms-period TimerOnDelay (AutoRestart) on
-    // first $A0. Each tick round-robins through the currently-bound slots
-    // in dmrSlots, builds a raw CAN frame of the form
-    //   <CAN ID 0x6A0 (4B)> <slot (1B)> <4B value> <3B padding>
-    // and shoves it at every channel via bus.Broadcaster. Each channel's
-    // own filter table decides delivery, so the diag channel ignores it
-    // (its FlowControl filter is on 0x7E8) while PCMTec's UUDT listener
-    // channel (PASS_FILTER on 0x6A0) takes it.
-    //
-    // The data payload is currently four zero bytes - no real ECU here to
-    // sample RAM from. If PCMTec accepts that, we progress; if it rejects
-    // ("Sequence counter mismatch" or similar), the response shape needs
-    // refinement and we know what to look for.
-    // PCMTec filters BOTH 0x6A0 AND 0x6A4 (mask FFFFFFFE on each so 0x6A1/
-    // 0x6A5 also pass). The dual filter strongly suggests Ford's "stream A /
-    // stream B" convention - parallel UUDT streams the broadcast tester
-    // reads as a paired feed. Each tick we emit on one ID then the other so
-    // both PCMTec filters see traffic.
-    private static readonly ushort[] UudtBroadcastCanIds = new ushort[] { 0x6A0, 0x6A4 };
-    private static int broadcastCanIdIdx;
+    // Engine DMR rapid-packet wire format required by the tester's live parser
+    // (for this HAEE4UY / "Spanish Oak" platform, where the read-offset path is
+    // active):
+    //   payload[0]  - length/format prefix, skipped by the parser
+    //   payload[1]  - MUST equal 0xE0 (rapid-packet marker = $A0 | 0x40); if it
+    //                 isn't, the frame is rejected, no slot ever produces valid
+    //                 data, the tester's "no DMR packets" watchdog overflows and
+    //                 it tears the channel down and re-identifies in a loop
+    //   payload[2]  - the slot index assigned in $A1 (must match dmrIndex)
+    //   payload[3.] - value bytes (NOT validated; zeros accepted, no rolling
+    //                 counter, no checksum)
+    // CAN ID MUST be 0x6A0/0x6A1 (engine stream). 0x6A4/0x6A5 are the tester's
+    // transmission (TCM) stream, which is absent on a PCM-only sim, so frames
+    // there are silently dropped - do NOT emit engine data on them.
+    // The legacy SCP broadcasts (0x97/0x120/0x12D/0x200/0x207/0x427/0x44D) do
+    // not affect session liveness; we keep only the 0x97 heartbeat below as
+    // harmless engine-alive cosmetics.
+    private const ushort EngineDmrCanId = 0x6A0;
+    private const byte DmrRapidPacketMarker = 0xE0;   // $A0 | 0x40
     private static readonly Lock BroadcastLock = new();
     private static Core.Utilities.TimerOnDelay? broadcastTimer;
     private static VirtualBus? broadcastBus;
-    private static int broadcastSlotIdx;
     private static byte[]? broadcastSlotOrder;
+    private static EcuNode? broadcastNode;
 
-    private static void EnsureBroadcastStarted(VirtualBus? bus)
+    private static void EnsureBroadcastStarted(VirtualBus? bus, EcuNode? node)
     {
         if (bus == null) return;
         lock (BroadcastLock)
         {
+            broadcastNode = node;   // live signal source + DMR address->signal map for the value bytes
             // Re-subscribe HostDisconnected on every $A0 - cheap, and survives
             // a previous session's StopBroadcast wiping the subscription. The
             // -= before += is the idempotency belt-and-braces (delegate equality
@@ -261,7 +259,6 @@ public sealed class FordUdsPersona : IDiagnosticPersona
             // slots between sessions and we want the broadcast loop to
             // track the current map.
             broadcastSlotOrder = dmrSlots.Keys.OrderBy(k => k).ToArray();
-            broadcastSlotIdx = 0;
             if (broadcastTimer != null) return;
 
             broadcastTimer = new Core.Utilities.TimerOnDelay
@@ -287,8 +284,7 @@ public sealed class FordUdsPersona : IDiagnosticPersona
             broadcastTimer = null;
             broadcastBus = null;
             broadcastSlotOrder = null;
-            broadcastSlotIdx = 0;
-            broadcastCanIdIdx = 0;
+            broadcastNode = null;
         }
     }
 
@@ -296,32 +292,55 @@ public sealed class FordUdsPersona : IDiagnosticPersona
     {
         IFrameBroadcaster? broadcaster;
         byte[]? order;
-        int slotIdx;
-        ushort canId;
+        EcuNode? node;
+        double nowMs;
         lock (BroadcastLock)
         {
             if (broadcastBus == null) return;
             broadcaster = broadcastBus.Broadcaster;
             order = broadcastSlotOrder;
-            if (order == null || order.Length == 0) return;
-            slotIdx = broadcastSlotIdx;
-            broadcastSlotIdx = (slotIdx + 1) % order.Length;
-            canId = UudtBroadcastCanIds[broadcastCanIdIdx];
-            broadcastCanIdIdx = (broadcastCanIdIdx + 1) % UudtBroadcastCanIds.Length;
+            node = broadcastNode;
+            nowMs = broadcastBus.NowMs;
         }
-        if (broadcaster == null) return;
+        if (broadcaster == null || order == null || order.Length == 0) return;
+        var engine = node?.EngineModel;
 
-        byte slot = order[slotIdx];
-        // 4-byte CAN ID prefix + 8 data bytes = 12-byte frame, matching the
-        // existing UUDT format DpidScheduler uses for GM. Data: slot + 4
-        // zeros + 3-byte pad. The 4 "value" bytes are zero pending PCMTec
-        // feedback on the expected payload shape.
-        var frame = new byte[12];
-        frame[2] = (byte)((canId >> 8) & 0xFF);
-        frame[3] = (byte)(canId & 0xFF);
-        frame[4] = slot;
-        // frame[5..11] already zero
-        broadcaster.BroadcastFrame(frame);
+        // Engine DMR rapid-packet stream on 0x6A0. 4-byte CAN ID prefix + 8 data
+        // bytes = 12-byte raw frame. Layout per the verified PCMTec parser (see
+        // the field-block comment above): [0]=format prefix (skipped), [1]=0xE0
+        // marker (mandatory), [2]=slot index (must match $A1), [3..]=value
+        // bytes. One frame per bound slot each tick.
+        //
+        // Each slot's value comes from the user's DMR map for that slot's RAM
+        // address (EcuNode.DmrMappingFor): the mapped engine signal, transformed
+        // by the mapping's Scale/Offset, then written in the mapping's Encoding.
+        // Unmapped addresses default to EngineRpm as a 32-bit big-endian float
+        // (the validated form) so a table-less config keeps the prior behaviour.
+        foreach (var slot in order)
+        {
+            uint addr = dmrSlots.TryGetValue(slot, out var a) ? a : 0u;
+            var mapping = node?.DmrMappingFor(addr);
+            var signal = mapping?.Signal ?? Common.Signals.SignalId.EngineRpm;
+            double sampled = engine == null ? 0.0 : engine.Sample(signal, nowMs);
+            double rawValue = sampled * (mapping?.Scale ?? 1.0) + (mapping?.Offset ?? 0.0);
+            byte[] valueBytes = Common.Signals.DmrValueCodec.Encode(
+                mapping?.Encoding ?? Common.Signals.DmrValueEncoding.Float32BE, rawValue);
+
+            var frame = new byte[12];
+            frame[2] = (byte)((EngineDmrCanId >> 8) & 0xFF);
+            frame[3] = (byte)(EngineDmrCanId & 0xFF);
+            frame[4] = 0x07;                  // payload[0] length/format prefix - parser skips it
+            frame[5] = DmrRapidPacketMarker;  // payload[1] = 0xE0 - the gate PCMTec requires
+            frame[6] = slot;                  // payload[2] = the $A1-assigned dmrIndex
+            // value bytes start at frame[7]; the slot value region is 4 bytes
+            // (frame[7..10]). Narrower encodings leave the trailing bytes zero.
+            for (int i = 0; i < valueBytes.Length && 7 + i < 11; i++)
+                frame[7 + i] = valueBytes[i];
+            broadcaster.BroadcastFrame(frame);
+        }
+
+        // RPM for the 0x97 engine-bus heartbeat below (independent of the DMR slots).
+        float rpm = engine == null ? 0f : (float)engine.Sample(Common.Signals.SignalId.EngineRpm, nowMs);
 
         // Phantom Ford engine-bus broadcast: PCMTec installs a filter for
         // 0x97 (`PCM_Pmes_PCM` / engine-bus heartbeat carrying RPM and
@@ -330,15 +349,15 @@ public sealed class FordUdsPersona : IDiagnosticPersona
         // any 0x97 traffic the logger may decide the engine is dead and
         // exit. Emit a synthetic frame each tick alongside the DMR stream.
         //
-        // Bytes: bytes 0-1 = 16-bit BE RPM*4 = 800 RPM idle = 3200 = 0x0C80.
-        // (Common Ford encoding. If the exact format is wrong PCMTec
-        // probably still accepts ANY 0x97 traffic as "bus alive" since the
-        // engine-running flag is set elsewhere.)
+        // Bytes 0-1 = 16-bit BE RPM*4 (the common Ford engine-bus encoding;
+        // 800 rpm -> 3200 = 0x0C80). Now driven live from the same engine model
+        // as the DMR stream rather than a constant.
+        ushort rpmX4 = (ushort)Math.Clamp(rpm * 4f, 0f, ushort.MaxValue);
         var rpmFrame = new byte[12];
         rpmFrame[2] = 0x00; // CAN ID high
         rpmFrame[3] = 0x97; // CAN ID low
-        rpmFrame[4] = 0x0C; // RPM high (800 rpm * 4 = 3200 = 0x0C80)
-        rpmFrame[5] = 0x80; // RPM low
+        rpmFrame[4] = (byte)(rpmX4 >> 8);   // RPM*4 high
+        rpmFrame[5] = (byte)(rpmX4 & 0xFF); // RPM*4 low
         // rpmFrame[6..11] zero - other engine-bus fields (load, gear, etc.)
         broadcaster.BroadcastFrame(rpmFrame);
     }
@@ -544,7 +563,7 @@ public sealed class FordUdsPersona : IDiagnosticPersona
         // PCMTec's USDT layer doesn't see a NRC/timeout.
         if (sid == 0xA0)
         {
-            EnsureBroadcastStarted(ch.Bus);
+            EnsureBroadcastStarted(ch.Bus, node);
             var reply = new byte[usdt.Length];
             reply[0] = 0xE0;
             for (int i = 1; i < usdt.Length; i++) reply[i] = usdt[i];
@@ -722,8 +741,14 @@ public sealed class FordUdsPersona : IDiagnosticPersona
             return true;
         }
 
-        ServiceUtil.EnqueueNrc(node, ch, sid, Nrc.ServiceNotSupported);
-        return true;
+        // Not a Ford-specific service. Decline so VirtualBus.DispatchUsdt can
+        // offer it to CommonServices (stack-neutral services like $22) before
+        // falling back to NRC $11 ServiceNotSupported. Returning false here -
+        // rather than NRC'ing inline - is what lets ForScan's $22 0200 connect
+        // probe reach the shared Service22Handler instead of being swallowed.
+        // (Functional requests already returned true at the top of Dispatch,
+        // so they stay silent and never reach this point.)
+        return false;
     }
 
     // ---- internal: flash-write capture ----

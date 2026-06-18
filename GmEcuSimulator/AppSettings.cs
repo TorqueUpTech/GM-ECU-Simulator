@@ -52,6 +52,13 @@ public sealed class AppSettings
     public bool LogSuppressTesterPresentInWindow { get; set; }
 
     /// <summary>
+    /// "Hide broadcasts" bus-log toggle: drop configured DBC broadcast frames
+    /// (0x12D, 0x207, ...) from the live textboxes only. The file-log capture
+    /// is unaffected - a readability tweak for the live window.
+    /// </summary>
+    public bool LogSuppressBroadcastsInWindow { get; set; }
+
+    /// <summary>
     /// Active top-level mode (ECU Simulator / DPS Simulator).
     /// Drives which per-mode config file the app loads and saves, single-ECU
     /// vs multi-ECU constraints, and which tabs / fields are visible. Default

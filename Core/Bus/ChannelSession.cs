@@ -103,6 +103,14 @@ public sealed class ChannelSession
     // reassembled payloads from the IsoChannel's queue, not raw CAN frames.
     public void EnqueueRx(PassThruMsg msg)
     {
+        // Stamp the J2534 message timestamp from the global bus clock (µs) at
+        // this single delivery chokepoint - every host-bound frame (DMR
+        // broadcasts, diagnostic responses) passes through here. A host plots
+        // its time axis from this; without it all samples land at t=0. Only
+        // stamp when unset so a caller that already timed a frame wins.
+        if (msg.Timestamp == 0)
+            msg.Timestamp = Bus?.NowMicros ?? 0;
+
         if (Protocol == ProtocolID.ISO15765 && IsoChannelInbound != null && msg.Data.Length >= 4)
         {
             uint canId = ((uint)msg.Data[0] << 24) | ((uint)msg.Data[1] << 16)
@@ -115,7 +123,7 @@ public sealed class ChannelSession
             // dispatch returned, the FF would print AFTER its own CFs - the
             // out-of-order bus log a VIN read produced (FF last instead of
             // first). Logging first makes log order match wire order.
-            Bus?.LogRx(Id, msg.Data);
+            Bus?.LogRx(Id, msg.Data, msg.IsBroadcast);
             if (IsoChannelInbound(canId, msg.Data))
                 return;
             // Unmatched by any FlowControl filter: fall through to raw delivery
@@ -132,10 +140,10 @@ public sealed class ChannelSession
 
         if (!ShouldDeliver(msg.Data))
         {
-            Bus?.LogRxFiltered(Id, msg.Data);
+            Bus?.LogRxFiltered(Id, msg.Data, msg.IsBroadcast);
             return;
         }
-        Bus?.LogRx(Id, msg.Data);
+        Bus?.LogRx(Id, msg.Data, msg.IsBroadcast);
         RxQueue.Enqueue(msg);
         RxAvailable.Release();      // wake any ReadMsgs caller parked on this channel
     }

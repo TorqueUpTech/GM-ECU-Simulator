@@ -42,6 +42,10 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     public ObservableCollection<BroadcastMessageViewModel> Broadcasts { get; } = new();
     private BroadcastMessageViewModel? selectedBroadcast;
 
+    // Ford-persona DMR address -> engine signal map (only meaningful / shown for ford-uds ECUs).
+    public ObservableCollection<DmrSignalMappingViewModel> DmrSignalMappings { get; } = new();
+    private DmrSignalMappingViewModel? selectedDmrMapping;
+
     public GlitchConfigViewModel Glitch { get; }
     private PidViewModel? selectedPid;
 
@@ -58,11 +62,17 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         foreach (var pid in model.AllPids) Pids.Add(new PidViewModel(pid, this));
         foreach (var def in J1979Catalogue.All) Obd2Pids.Add(new J1979RowViewModel(def, model));
         foreach (var msg in model.Broadcasts) Broadcasts.Add(new BroadcastMessageViewModel(msg, this));
+        foreach (var m in model.DmrSignalMappings) DmrSignalMappings.Add(new DmrSignalMappingViewModel(m, this));
 
         AddBroadcastCommand = new RelayCommand(AddBroadcast);
         RemoveBroadcastCommand = new RelayCommand(
             () => { if (SelectedBroadcast != null) RemoveBroadcast(SelectedBroadcast); },
             () => SelectedBroadcast != null);
+        AddDmrMappingCommand = new RelayCommand(AddDmrMapping);
+        RemoveDmrMappingCommand = new RelayCommand(
+            () => { if (SelectedDmrMapping != null) RemoveDmrMapping(SelectedDmrMapping); },
+            () => SelectedDmrMapping != null);
+        SeedDefaultPidsCommand = new RelayCommand(() => SeedDefaultPids(), () => !Model.IsPrimed);
 
         // One collapsible section per editable mode. Each builds its own filtered/sorted view over Pids and its own
         // column-filter set; the order here is the editor's top-to-bottom order.
@@ -120,6 +130,13 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
 
     public RelayCommand AddBroadcastCommand { get; private set; } = null!;
     public RelayCommand RemoveBroadcastCommand { get; private set; } = null!;
+    public RelayCommand AddDmrMappingCommand { get; private set; } = null!;
+    public RelayCommand RemoveDmrMappingCommand { get; private set; } = null!;
+
+    // Explicit "Seed default PIDs" action for the editor's Diagnostic PIDs header. Adds the curated baseline identity
+    // ($1A) + live $22 set to this ECU. Opt-in by design: seeding is no longer automatic on Add ECU / config load, so
+    // a deleted seed row never reappears on its own. Disabled for primed ECUs (they own their map from the archive).
+    public RelayCommand SeedDefaultPidsCommand { get; private set; } = null!;
 
     public BroadcastMessageViewModel? SelectedBroadcast
     {
@@ -166,6 +183,41 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         Model.RaiseBroadcastsChanged();
         bus?.BroadcastScheduler.RebuildIfRunning();
     }
+
+    // ---------------- Ford DMR signal map ----------------
+
+    /// <summary>True only for ECUs running the Ford UDS persona (the DMR map is meaningless
+    /// otherwise). Drives the visibility of the DMR mapping section in the editor.</summary>
+    public bool IsFordUdsPersona => Model.Persona.Id == "ford-uds";
+
+    public DmrSignalMappingViewModel? SelectedDmrMapping
+    {
+        get => selectedDmrMapping;
+        set => SetField(ref selectedDmrMapping, value);
+    }
+
+    private void AddDmrMapping()
+    {
+        var m = new Core.Ecu.DmrSignalMapping { Address = 0x003F7FA0, Name = "", Signal = Common.Signals.SignalId.EngineRpm };
+        Model.AddDmrSignalMapping(m);
+        var vm = new DmrSignalMappingViewModel(m, this);
+        DmrSignalMappings.Add(vm);
+        SelectedDmrMapping = vm;
+        OnDmrMappingEdited();
+    }
+
+    public void RemoveDmrMapping(DmrSignalMappingViewModel vm)
+    {
+        Model.RemoveDmrSignalMapping(vm.Model);
+        DmrSignalMappings.Remove(vm);
+        if (ReferenceEquals(selectedDmrMapping, vm)) SelectedDmrMapping = null;
+        OnDmrMappingEdited();
+    }
+
+    // Any DMR-map edit: notify node-level subscribers. The Ford broadcast loop reads the map live
+    // (EcuNode.DmrSignalFor) each tick, so there is no scheduler to rebuild - the change is picked up
+    // on the next emit automatically.
+    public void OnDmrMappingEdited() => Model.RaiseDmrSignalMappingsChanged();
 
     // 10 Hz live-value refresh for the broadcast signal readouts (driven by MainWindow's timer).
     public void RefreshBroadcastsLive(double timeMs)
@@ -761,6 +813,35 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     // Back-compat no-arg add (MainViewModel's top toolbar): default to a $22 row.
     public void AddPid() => AddPid(PidMode.Mode22);
 
+    // Explicit, opt-in seeding of the curated default PID set onto THIS ECU (the editor's "Seed default PIDs" button).
+    // Runs the same two seeders that used to fire automatically on Add ECU / config load, then wraps any rows they
+    // added in PidViewModels so the editor grid shows them. Both seeders are precedence-safe (existing DIDs win) and
+    // skip primed ECUs, so this is a no-op on an ECU that already carries the full set and never clobbers a user edit.
+    // Returns the number of rows actually added.
+    public int SeedDefaultPids()
+    {
+        if (Model.IsPrimed) return 0;
+
+        // The seeders mutate the EcuNode stores directly, so capture the model refs we already wrap and diff after.
+        var wrapped = new HashSet<Pid>(Pids.Select(p => p.Model));
+        EcuIdentitySeeder.Seed(Model);
+        EcuMode22Seeder.Seed(Model);
+
+        int added = 0;
+        foreach (var pid in Model.AllPids)
+        {
+            if (wrapped.Contains(pid)) continue;
+            Pids.Add(new PidViewModel(pid, this));   // section ListCollectionViews re-flow; only the matching one shows it
+            added++;
+        }
+        if (added > 0)
+        {
+            RefreshAliasCollisions();
+            NotifyIdentifierSetChanged();
+        }
+        return added;
+    }
+
     // The per-mode store keys currently occupied by rows in <paramref name="mode"/>, optionally excluding one row.
     // Two rows that share a key collide in EcuNode's store (last write wins, the rest go silent on the wire), so the
     // editor consults this to keep each identifier unique - the $22 catalogue picker hides taken identifiers and the
@@ -936,6 +1017,11 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
             if (value.Id == Model.Persona.Id) return;
             Model.Persona = Core.Ecu.Personas.PersonaRegistry.Resolve(value.Id);
             OnPropertyChanged();
+            // The DMR signal map section is Ford-persona-only; re-announce its visibility.
+            OnPropertyChanged(nameof(IsFordUdsPersona));
+            // The $22 Identifier picker is persona-scoped (GM vs Ford library),
+            // so re-announce every row's catalogue to repopulate the dropdowns.
+            NotifyIdentifierSetChanged();
             // Spec-aligned with ApplyModuleSelection: replacing the dispatch
             // table is a fresh start, so clear any unlock / pending seed /
             // lockout state left over from the previous persona.

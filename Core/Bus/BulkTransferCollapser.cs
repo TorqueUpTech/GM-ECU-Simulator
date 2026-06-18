@@ -66,7 +66,7 @@ public sealed class BulkTransferCollapser
     /// directly. The sink receives both so the caller can route each to the
     /// appropriate destination (textbox vs. file) without re-formatting.
     /// </remarks>
-    public void Process(uint chId, uint canId, ReadOnlySpan<byte> payload, string prettyLine, string csvLine, bool isTesterPresent, Action<string, string, bool> sink)
+    public void Process(uint chId, uint canId, ReadOnlySpan<byte> payload, string prettyLine, string csvLine, bool isTesterPresent, bool isBroadcast, Action<string, string, bool, bool> sink)
     {
         // Classify the frame at the ISO-TP layer. Strip the GMLAN extended-
         // addressing byte ($FE all-nodes / $FD gateway on $101) before
@@ -196,10 +196,10 @@ public sealed class BulkTransferCollapser
             }
         }
 
-        // Collapse marker is synthetic - never a TesterPresent. The pass-through
-        // frame keeps its caller-supplied classification.
-        if (markerPretty != null) sink(markerPretty, markerCsv!, false);
-        if (emitLine) sink(prettyLine, csvLine, isTesterPresent);
+        // Collapse marker is synthetic - never a TesterPresent or broadcast. The
+        // pass-through frame keeps its caller-supplied classification.
+        if (markerPretty != null) sink(markerPretty, markerCsv!, false, false);
+        if (emitLine) sink(prettyLine, csvLine, isTesterPresent, isBroadcast);
     }
 
     /// <summary>

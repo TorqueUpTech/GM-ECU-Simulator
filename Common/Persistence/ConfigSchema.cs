@@ -273,6 +273,29 @@ public sealed class EcuDto
     // only when non-empty so standard configs stay quiet. Imported from a .dbc via the editor or
     // round-tripped on its own as a *.dbc.json (a flat List<BroadcastMessageDto>).
     public List<BroadcastMessageDto>? Broadcasts { get; set; }
+
+    // Ford-persona DMR (Data-Mode-Read) address -> engine signal map. Lets the user pre-wire each
+    // datalog RAM address PCMTec binds via $A1 to a live engine SignalId so the 0x6A0 stream carries
+    // real values. Null / omitted -> no mappings (slots fall back to EngineRpm). Only consulted by
+    // the Ford UDS persona.
+    public List<DmrSignalMappingDto>? DmrSignalMappings { get; set; }
+}
+
+// One DMR address -> engine signal mapping. Address is the 32-bit RAM address PCMTec reads via the
+// datalog; Signal is the engine-simulator value the Ford persona writes into that slot's 0x6A0 frame.
+public sealed class DmrSignalMappingDto
+{
+    [JsonConverter(typeof(HexUIntConverter))]
+    public required uint Address { get; set; }
+
+    public string Name { get; set; } = "";
+    public required SignalId Signal { get; set; }
+
+    // Wire encoding + linear transform applied before encoding (emitted = signal * Scale + Offset).
+    // Defaults match the validated RPM form, so older files lacking these fields load unchanged.
+    public DmrValueEncoding Encoding { get; set; } = DmrValueEncoding.Float32BE;
+    public double Scale { get; set; } = 1.0;
+    public double Offset { get; set; }
 }
 
 // One unsolicited CAN broadcast message. CanId is the raw arbitration ID a passive logger sees (not

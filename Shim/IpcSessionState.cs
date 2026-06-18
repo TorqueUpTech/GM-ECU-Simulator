@@ -65,6 +65,7 @@ public sealed class IpcSessionState : IDisposable, IFrameBroadcaster
             {
                 ProtocolID = ProtocolID.CAN,
                 Data = frame,
+                IsBroadcast = true,   // unsolicited; lets the UI "Hide broadcasts" filter drop it
             });
         }
     }

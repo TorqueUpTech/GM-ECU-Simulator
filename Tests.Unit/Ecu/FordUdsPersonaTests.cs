@@ -9,13 +9,14 @@ using Xunit;
 namespace EcuSimulator.Tests.Ecu;
 
 // FordUdsPersona covers:
-//   - Every USDT request → NRC $7F SID $11 ServiceNotSupported on the wire.
+//   - A SID the persona doesn't implement is DECLINED (Dispatch returns false)
+//     so VirtualBus.DispatchUsdt can offer it to CommonServices and then NRC
+//     $11 ServiceNotSupported - the persona no longer NRCs inline. (End-to-end
+//     bus behaviour, including the shared $22 path, is in
+//     CommonServicesDispatchTests.)
 //   - Persona logs to a file (best-effort, validated by checking that the
 //     file path is non-null after Dispatch).
 //   - Functional broadcasts produce no response (spec).
-//   - The persona claims every SID so VirtualBus's fallback ServiceNotSupported
-//     never fires; we verify by dispatching a $99 (unknown) and confirming
-//     exactly one NRC frame, not two.
 //
 // Test pattern matches Service22HandlerTests: build a node + channel, call
 // Dispatch directly, drain the response queue.
@@ -32,17 +33,18 @@ public sealed class FordUdsPersonaTests
 
     public static IEnumerable<object[]> PhysicalCases() => new[]
     {
-        new object[] { new byte[] { 0x22, 0xF1, 0x90 } }, // ReadDataByIdentifier VIN
         new object[] { new byte[] { 0x10, 0x01 } },       // DiagSessionControl default
         new object[] { new byte[] { 0x21, 0x01 } },       // Ford Mode 21 ReadDataByLocalId
         new object[] { new byte[] { 0x99 } },             // Wholly unknown SID
-        // Note: 0x3E, 0x09, $23, $27, $A0, $A1 deliberately omitted - those have
-        // canned / handled responses now, covered by dedicated tests below.
+        // Note: $22 is no longer here - it is a stack-neutral common service
+        // (CommonServices/Service22Handler), so the persona declines it and the
+        // bus routes it. 0x3E, 0x09, $23, $27, $A0, $A1 have canned / handled
+        // responses, covered by dedicated tests below.
     };
 
     [Theory]
     [MemberData(nameof(PhysicalCases))]
-    public void Physical_AnyRequest_RepliesWithServiceNotSupported(byte[] usdt)
+    public void Physical_UnimplementedSid_IsDeclinedForBusToNrc(byte[] usdt)
     {
         var (node, ch) = MakeNodeWithPersona();
         var sid = usdt[0];
@@ -53,9 +55,10 @@ public sealed class FordUdsPersonaTests
             scheduler: new DpidScheduler(new VirtualBus()),
             stack: DiagnosticStack.Uds);
 
-        Assert.True(claimed, "ford-uds must claim every SID so the bus fallback never fires");
-        var resp = TestFrame.DequeueSingleFrameUsdt(ch);
-        Assert.Equal(new byte[] { 0x7F, sid, 0x11 }, resp);
+        // The persona declines (returns false) and emits nothing itself; the
+        // NRC $11 is VirtualBus.DispatchUsdt's job once CommonServices also
+        // declines. (Full bus path verified in CommonServicesDispatchTests.)
+        Assert.False(claimed, "ford-uds should decline SIDs it doesn't implement so the bus can route/NRC");
         TestFrame.AssertEmpty(ch);
     }
 
@@ -411,21 +414,23 @@ public sealed class FordUdsPersonaTests
     }
 
     [Fact]
-    public void Mode09_UnknownPid_FallsBackToNrc()
+    public void Mode09_UnknownPid_IsDeclinedForBusToNrc()
     {
-        // PID 0x06 (CVN) is not in the whitelist - it must still log + NRC,
-        // i.e. the canned-response table is opt-in, not greedy.
+        // PID 0x06 (CVN) is not in the whitelist - the canned-response table is
+        // opt-in, not greedy. $09 isn't a common service, so the persona
+        // declines (returns false) and emits nothing; VirtualBus.DispatchUsdt
+        // then NRCs $11. (End-to-end NRC verified in CommonServicesDispatchTests.)
         var (node, ch) = MakeNodeWithPersona();
         byte[] usdt = { 0x09, 0x06 };
 
-        node.Persona.Dispatch(
+        bool claimed = node.Persona.Dispatch(
             node, usdt, ch,
             isFunctional: false, sid: 0x09, nowMs: 0,
             scheduler: new DpidScheduler(new VirtualBus()),
             stack: DiagnosticStack.Uds);
 
-        var resp = TestFrame.DequeueSingleFrameUsdt(ch);
-        Assert.Equal(new byte[] { 0x7F, 0x09, 0x11 }, resp);
+        Assert.False(claimed, "unwhitelisted $09 PID should be declined so the bus NRCs");
+        TestFrame.AssertEmpty(ch);
     }
 
     [Fact]

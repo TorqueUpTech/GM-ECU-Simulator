@@ -152,8 +152,6 @@ A **paid commercial license** is required for any **business or for-profit** use
 * Hosting it as part of a SaaS or networked offering
 * Any use where AGPL-3.0's source-disclosure requirements are incompatible with how you want to ship
 
-Commercial licenses are offered on reasonable terms. To request a quote, please email **ndpryor@hotmail.com** with a short description of your intended use.
-
 If you're not sure which side of the line your use falls on, just ask - hobbyist by default, business if money's involved.
 
 ## Status / scope

@@ -166,7 +166,12 @@ public static class Service36Handler
             // persona swap.
             if (ch.Bus is not null)
                 BootloaderCaptureWriter.WriteCompletedBracketIfKernel(node, ch.Bus, "exec");
-            node.Persona = UdsKernelPersona.Instance;
+            // A PcmHammer/PCMHacking kernel exposes its own flash command set
+            // (mode $3D + a custom $36 write); give it the persona that answers
+            // those. Any other kernel gets the generic UdsKernelPersona.
+            node.Persona = KernelLooksLikePcmHammer(node)
+                ? PcmHammerKernelPersona.Instance
+                : UdsKernelPersona.Instance;
         }
 
         // $76, delayed by the ECU's FlashTransferDelayMs (0 = immediate). Lets
@@ -174,5 +179,17 @@ public static class Service36Handler
         // synchronous behaviour every existing flow/test relies on.
         FlashTiming.EnqueueTransferResponse(node, ch, [Service.Positive(Service.TransferData)]);
         return true;
+    }
+
+    // The PcmHammer/PCMHacking flash kernel image carries an ASCII "PCMHacking"
+    // banner. Spotting it in the just-uploaded kernel lets us present that
+    // kernel's flash command set without any per-ECU configuration.
+    private static bool KernelLooksLikePcmHammer(EcuNode node)
+    {
+        byte[]? buf = node.State.DownloadBuffer;
+        if (buf is null) return false;
+        int hi = (int)Math.Min((uint)buf.Length, node.State.DownloadCaptureHighWaterMark);
+        if (hi <= 0) hi = buf.Length;
+        return buf.AsSpan(0, hi).IndexOf("PCMHacking"u8) >= 0;
     }
 }

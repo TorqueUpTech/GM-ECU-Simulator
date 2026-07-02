@@ -88,7 +88,7 @@ public static class EcuExitLogic
         //     reverted a loaded FordUdsPersona to gmw3110, after which the
         //     capture sink NRC'd PCMTec's Mode $09 ($7F 09 11) instead of
         //     answering VIN/CalID.
-        if (node.Persona is UdsKernelPersona)
+        if (node.Persona is UdsKernelPersona or PcmHammerKernelPersona)
             node.Persona = Gmw3110Persona.Instance;
 
         // 3d. Normal communication resumes. ClearProgrammingState above reset NormalCommunicationDisabled, so a

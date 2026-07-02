@@ -232,6 +232,15 @@ public sealed class NodeState
     public List<FlashEraseRegion> CapturedFlashRegions { get; } = new();
 
     /// <summary>
+    /// Flash image the PcmHammer/PCMHacking flash kernel operates on once it is
+    /// running (see <see cref="Personas.PcmHammerKernelPersona"/>). Lazily
+    /// allocated ($FF), erased per 64 KiB sector by $3D $05, written by the
+    /// kernel $36, CRC-32'd by $3D $02. Null until the kernel writes; reset by
+    /// ClearProgrammingState.
+    /// </summary>
+    public byte[]? KernelFlash { get; set; }
+
+    /// <summary>
     /// Wipes all programming + download flags. Called from EcuExitLogic so $20
     /// and P3C timeout return the ECU to Normal Communication Mode.
     /// </summary>
@@ -251,5 +260,6 @@ public sealed class NodeState
         DownloadCaptureSequence = 0;
         DownloadCaptureSessionTimestamp = null;
         CapturedFlashRegions.Clear();
+        KernelFlash = null;
     }
 }

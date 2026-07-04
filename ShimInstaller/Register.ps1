@@ -61,8 +61,30 @@ if ((Test-Path $flatShim64) -and (Test-Path $flatShim32) -and (Test-Path $flatEx
 # --- Optional build --------------------------------------------------------
 
 if ($Build) {
-    $msbuild = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
-    if (-not (Test-Path $msbuild)) { throw "MSBuild not found at $msbuild" }
+    # Locate MSBuild robustly rather than assuming one VS edition/path. Prefer
+    # vswhere (ships with every VS 2017+ installer) so this works on Build
+    # Tools, Community, Professional or Enterprise; fall back to the known
+    # fixed paths if vswhere is absent. -products * is required so Build Tools
+    # (not a default "product") is included. The prior hardcoded Community path
+    # threw "MSBuild not found" on boxes that only have the VS 2022 Build Tools.
+    $msbuild = $null
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $found = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+        if ($found -and (Test-Path $found)) { $msbuild = $found }
+    }
+    if (-not $msbuild) {
+        foreach ($cand in @(
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe")) {
+            if (Test-Path $cand) { $msbuild = $cand; break }
+        }
+    }
+    if (-not $msbuild) { throw "MSBuild not found (checked vswhere and known VS 2022 paths). Install VS 2022 Build Tools with the Desktop C++ workload." }
+    Write-Host "Using MSBuild: $msbuild"
 
     Write-Host "Building 64-bit shim..."
     & $msbuild "$repoRoot\PassThruShim\PassThruShim.vcxproj" /p:Configuration=Debug /p:Platform=x64 /nologo /v:minimal | Out-Host

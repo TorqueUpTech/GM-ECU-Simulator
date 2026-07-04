@@ -14,6 +14,7 @@ public static class PersonaRegistry
         "gmw3110"                                  => Gmw3110Persona.Instance,
         "uds-kernel"                               => UdsKernelPersona.Instance,
         "pcmhammer-kernel"                         => PcmHammerKernelPersona.Instance,
+        "t43-read-kernel"                          => T43KernelPersona.Instance,
         "ford-uds"                                 => FordUdsPersona.Instance,
         _                                          => Gmw3110Persona.Instance,
     };

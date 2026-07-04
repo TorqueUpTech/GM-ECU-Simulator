@@ -42,6 +42,27 @@ public sealed class NodeState
     /// </summary>
     public IsoTpFragmenter Fragmenter { get; } = new();
 
+    // T43 (6Speed) read-kernel upload: bytes still expected in the RAW (non-ISO-TP)
+    // kernel stream that T43RawKernelBridge swallows after the READ descriptor First
+    // Frame. 0 = not in a T43 read upload. The tool sends the kernel as bare 8-byte
+    // frames (no CF PCI) which the ISO-TP reassembler can't consume, so the bridge
+    // counts them down; the descriptor handler emits 0x99 + swaps in T43KernelPersona.
+    public int T43UploadRemaining;
+
+    // T43 WRITE (6Speed write kernel) raw state, also driven by T43RawKernelBridge.
+    // T43WriteActive: a write session is in progress (set the moment an exact
+    // write-kernel address First Frame -- 1C 26.. / 14 06.. -- is seen; cleared on
+    // $20/reset). It gates the segment-block descriptor recognition so a variable-
+    // length block FF (1X XX 36 00 00 3F C0 00) can't shadow a genuine ISO-TP $36 to
+    // address 0x3FC000 outside a write. T43WriteKernelSwallow: swallowing a write-
+    // kernel part's raw byte stream (the kernel byte count doesn't match the FF size,
+    // so the "76" is buffered on the FF and the swallow ends when the next $34
+    // arrives). T43WriteBlockRemaining: bytes left in the current segment write
+    // block's raw CF stream; on 0 the bridge emits the "0176" completion.
+    public bool T43WriteActive;
+    public bool T43WriteKernelSwallow;
+    public int  T43WriteBlockRemaining;
+
     public TesterPresentState TesterPresent { get; } = new();
 
     private ChannelSession? lastEnhancedChannel;
@@ -261,5 +282,12 @@ public sealed class NodeState
         DownloadCaptureSessionTimestamp = null;
         CapturedFlashRegions.Clear();
         KernelFlash = null;
+        // T43 (6Speed) RAW kernel state (T43RawKernelBridge). The write path stays
+        // on Gmw3110 -- no persona swap -- so its $20 funnels through here (via
+        // EcuExitLogic) rather than through T43KernelPersona.ReturnToNormalMode.
+        T43UploadRemaining = 0;
+        T43WriteActive = false;
+        T43WriteKernelSwallow = false;
+        T43WriteBlockRemaining = 0;
     }
 }

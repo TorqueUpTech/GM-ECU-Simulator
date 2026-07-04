@@ -430,6 +430,15 @@ public sealed class VirtualBus
             return;
         }
 
+        // ---- T43 (6Speed) RAW kernel protocol interception ------------------
+        // The 6Speed T43 read AND write kernels transfer NOT as ISO-TP but as $36
+        // TransferData First Frames + bare 8-byte streamed frames with tool-specific
+        // single-frame acks the reassembler/fragmenter can't produce. The bridge owns
+        // that whole raw state machine (read upload+$99, write kernel/block streaming
+        // + acks); anything it doesn't recognise falls through to normal dispatch.
+        if (Core.Ecu.Personas.T43RawKernelBridge.TryHandle(node, data, ch))
+            return;
+
         // FlowControl frames inbound from the host are for OUR fragmenter (the
         // host is the receiver of an in-flight ECU response). Route to the
         // node's fragmenter instead of letting the reassembler discard them.
@@ -460,6 +469,17 @@ public sealed class VirtualBus
         // aren't exposed on the caller's stack.
         var stack = DiagnosticStackClassifier.StackForCanId(canId);
         DispatchUsdt(node, assembled, ch, isFunctional: false, stack);
+    }
+
+    // Enqueue a raw CAN frame straight to the host channel, bypassing the ISO-TP
+    // fragmenter -- for the T43 read kernel's non-ISO-TP framing (0x99, the $75 ack
+    // and the raw read-block CFs).
+    internal static void EnqueueRawFrame(ChannelSession ch, uint canId, ReadOnlySpan<byte> payload)
+    {
+        var f = new byte[CanFrame.IdBytes + payload.Length];
+        CanFrame.WriteId(f, canId);
+        payload.CopyTo(f.AsSpan(CanFrame.IdBytes));
+        ch.EnqueueRx(new PassThruMsg { ProtocolID = ProtocolID.CAN, Data = f });
     }
 
     private void DispatchFunctional(ReadOnlySpan<byte> data, ChannelSession ch)

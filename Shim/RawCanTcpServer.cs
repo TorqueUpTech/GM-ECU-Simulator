@@ -182,6 +182,13 @@ public sealed class RawCanTcpServer : IAsyncDisposable
         using var connCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         isConnected = true;
 
+        // Deliver the unsolicited DBC/UUDT broadcast stream to this gauge channel.
+        // bus.Broadcaster used to be pipe-only, so a TCP gauge saw diagnostic
+        // responses but never the free-running powertrain broadcasts. Register here
+        // so it does; cleared in the finally below.
+        var broadcaster = new SingleChannelBroadcaster(ch);
+        bus.Broadcaster = broadcaster;
+
         try { bus.RaiseHostConnected(); }
         catch (Exception ex) { log($"[raw-can] HostConnected subscriber threw: {ex.Message}"); }
 
@@ -221,6 +228,8 @@ public sealed class RawCanTcpServer : IAsyncDisposable
                 try { await drain.ConfigureAwait(false); } catch { }
 
                 isConnected = false;
+                if (ReferenceEquals(bus.Broadcaster, broadcaster))
+                    bus.Broadcaster = null;
                 // Mutually exclusive with the pipe (only one transport live),
                 // so the global session-end signal is correct: CSV log trailer,
                 // bin-replay stop, etc. Subscribers are idempotent.

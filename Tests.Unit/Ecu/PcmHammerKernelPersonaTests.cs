@@ -95,4 +95,77 @@ public sealed class PcmHammerKernelPersonaTests
         Assert.Equal(0x7F, resp[0]);                    // negative response
         Assert.Equal(0x36, resp[1]);
     }
+
+    [Fact]
+    public void FlashId_Responds()
+    {
+        var node = NodeFactory.CreateNode();
+        var ch = NodeFactory.CreateChannel();
+        // $3D $01 -> $7D $01 <id4>. A zero id keeps PcmHammer on the E38 profile size.
+        Assert.True(Dispatch(node, ch, new byte[] { Sid3D, 0x01 }));
+        Assert.Equal(new byte[] { 0x7D, 0x01, 0x00, 0x00, 0x00, 0x00 },
+                     TestFrame.DequeueSingleFrameUsdt(ch));
+    }
+
+    [Fact]
+    public void Read_ReturnsSeededFlash()
+    {
+        var node = NodeFactory.CreateNode();
+        var ch = NodeFactory.CreateChannel();
+
+        // Seed the kernel flash exactly as ConfigStore would from FlashBinPath.
+        var seed = new byte[0x200000];
+        seed.AsSpan().Fill(0xFF);
+        seed[0x000010] = 0x12;
+        seed[0x000011] = 0x34;
+        node.KernelFlashSeed = seed;
+
+        // $35 <len3=0x000002> <addr3=0x000010> -> $75 ack, then $36 00 <addr3> <data2>
+        Assert.True(Dispatch(node, ch, new byte[] { 0x35, 0x00, 0x00, 0x02, 0x00, 0x00, 0x10 }));
+        Assert.Equal(new byte[] { 0x75 }, TestFrame.DequeueSingleFrameUsdt(ch));
+        Assert.Equal(new byte[] { 0x36, 0x00, 0x00, 0x00, 0x10, 0x12, 0x34 },
+                     TestFrame.DequeueSingleFrameUsdt(ch));
+        TestFrame.AssertEmpty(ch);
+    }
+
+    [Fact]
+    public void KernelRead_ResetsP3C_SoLongReadsDoNotRevert()
+    {
+        var node = NodeFactory.CreateNode();
+        var ch = NodeFactory.CreateChannel();
+        // Programming session: P3C active with the timer nearly at the 5 s P3Cnom.
+        node.State.TesterPresent.Activate();
+        node.State.TesterPresent.TimerMs = 4900;
+
+        // A $35 kernel read must reset P3C, else a long read reverts the kernel at ~5 s.
+        Assert.True(Dispatch(node, ch, new byte[] { 0x35, 0x00, 0x00, 0x02, 0x00, 0x00, 0x10 }));
+        Assert.Equal(0, node.State.TesterPresent.TimerMs);
+    }
+
+    [Fact]
+    public void WriteThenRead_RoundTrips()
+    {
+        var node = NodeFactory.CreateNode();
+        var ch = NodeFactory.CreateChannel();
+        uint addr = 0x020000;
+        byte[] data = { 0xDE, 0xAD };
+
+        // write: $36 $00 <len2> <addr3> <data> <sum2> -> $76
+        ushort sum = (ushort)(data[0] + data[1]);
+        var write = new byte[]
+        {
+            Sid36, 0x00, 0x00, 0x02,
+            (byte)(addr >> 16), (byte)(addr >> 8), (byte)addr,
+            data[0], data[1], (byte)(sum >> 8), (byte)sum,
+        };
+        Assert.True(Dispatch(node, ch, write));
+        Assert.Equal(new byte[] { 0x76 }, TestFrame.DequeueSingleFrameUsdt(ch));
+
+        // read it back: $35 <len3=2> <addr3> -> $75 ack, then $36 00 <addr3> <data2>
+        Assert.True(Dispatch(node, ch, new byte[]
+            { 0x35, 0x00, 0x00, 0x02, (byte)(addr >> 16), (byte)(addr >> 8), (byte)addr }));
+        Assert.Equal(new byte[] { 0x75 }, TestFrame.DequeueSingleFrameUsdt(ch));
+        Assert.Equal(new byte[] { 0x36, 0x00, (byte)(addr >> 16), (byte)(addr >> 8), (byte)addr, data[0], data[1] },
+                     TestFrame.DequeueSingleFrameUsdt(ch));
+    }
 }

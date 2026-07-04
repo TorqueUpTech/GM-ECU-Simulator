@@ -77,6 +77,31 @@ public sealed class BroadcastSchedulerTests
     }
 
     [Fact]
+    public void KernelRunning_SuppressesAllBroadcastsBusWide()
+    {
+        var bus = new VirtualBus();
+        var fake = new FakeBroadcaster();
+        bus.Broadcaster = fake;
+        // Two ECUs both broadcasting; only ONE runs a kernel.
+        var ecm = NodeWithConstantRpmBroadcast(0x0C9, 20);
+        var tcm = NodeWithConstantRpmBroadcast(0x1C9, 20);
+        bus.AddNode(ecm);
+        bus.AddNode(tcm);
+        // Kernel handover on the ECM => the WHOLE bus goes quiet (incl. the TCM).
+        ecm.Persona = Core.Ecu.Personas.PcmHammerKernelPersona.Instance;
+
+        bus.BroadcastScheduler.RebuildAndStart();
+        Thread.Sleep(120);
+        Assert.Equal(0, fake.Count);                 // suppressed while a kernel runs
+
+        // Kernel hands back => broadcasts resume, no rebuild needed.
+        ecm.Persona = Core.Ecu.Personas.Gmw3110Persona.Instance;
+        Thread.Sleep(120);
+        bus.BroadcastScheduler.StopAll();
+        Assert.NotEqual(0, fake.Count);
+    }
+
+    [Fact]
     public void DisabledMessage_IsNotScheduled()
     {
         var bus = new VirtualBus();

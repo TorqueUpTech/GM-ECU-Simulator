@@ -30,6 +30,11 @@ public sealed class UdsKernelPersona : IDiagnosticPersona
         _ = stack;  // kernel persona only runs after $36 sub $80; stack is
                     // whatever CAN ID the host used to hand control over.
 
+        // A running SPS kernel answers until $20 - reset P3C on every kernel request
+        // so a long operation (which may not send $3E) doesn't trip the 5 s P3Cnom
+        // timeout and revert the persona mid-flash.
+        node.State.TesterPresent.Reset();
+
         switch (sid)
         {
             case Iso14229.Service.RoutineControl:

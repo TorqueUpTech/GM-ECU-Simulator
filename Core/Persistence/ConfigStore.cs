@@ -210,6 +210,15 @@ public static class ConfigStore
         {
             Core.Ecu.Personas.FordUdsPersona.LoadFlashBin(dto.FlashBinPath!);
         }
+        else if (!string.IsNullOrWhiteSpace(dto.FlashBinPath))
+        {
+            // Seed the PcmHammer/PCMHacking flash kernel from the same bin so a
+            // real tool's READ returns a genuine image instead of blank $FF.
+            // Best-effort: a missing/unreadable bin leaves the kernel flash blank
+            // (the read then returns $FF - a visible symptom, not a hard fail).
+            try { node.KernelFlashSeed = System.IO.File.ReadAllBytes(dto.FlashBinPath!); }
+            catch { node.KernelFlashSeed = null; }
+        }
         foreach (var pidDto in dto.Pids)
         {
             // AddPid routes by pid.Mode into the appropriate per-mode store.

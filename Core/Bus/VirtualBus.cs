@@ -123,6 +123,26 @@ public sealed class VirtualBus
     public IFrameBroadcaster? Broadcaster { get; set; }
 
     /// <summary>
+    /// True while ANY ECU is running a flash kernel (PcmHammer / UDS SPS kernel).
+    /// A real GM bus goes silent during programming, so BroadcastScheduler suppresses
+    /// ALL DBC broadcasts bus-wide while this holds - not just the programmed ECU's
+    /// (which its own $28 DisableNormalCommunication already quiets), but every node's,
+    /// so a long kernel read/write sees a clean bus. Reverts to false when the kernel
+    /// hands control back on $20 / P3C timeout (persona reverts to Gmw3110).
+    /// </summary>
+    public bool AnyKernelActive
+    {
+        get
+        {
+            foreach (var n in Nodes)
+                if (n.Persona is Core.Ecu.Personas.PcmHammerKernelPersona
+                              or Core.Ecu.Personas.UdsKernelPersona)
+                    return true;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Frame-level traffic sink. Set to non-null to receive one record per
     /// frame in two formats simultaneously:
     ///   pretty - human-readable, space-delimited, for the on-screen textbox

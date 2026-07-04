@@ -362,7 +362,8 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     /// <summary>
     /// Path of the .bin chosen as this ECU's flash source, backed by the
     /// round-tripping <see cref="EcuNode.FlashBinPath"/>. Set by the bin picker;
-    /// the ford-uds persona reads the bytes to back Service $23.
+    /// the ford-uds persona reads the bytes to back Service $23, and every other
+    /// persona uses them to seed the PcmHammer/PCMHacking kernel flash (read/CRC).
     /// </summary>
     public string? FlashBinPath
     {
@@ -386,7 +387,14 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
     {
         FlashBinPath = null;
         if (Model.Persona.Id == "ford-uds")
+        {
             Core.Ecu.Personas.FordUdsPersona.LoadFlashBin((byte[]?)null);
+        }
+        else
+        {
+            Model.KernelFlashSeed = null;
+            Model.State.KernelFlash = null;
+        }
     }
 
     private void LoadInfoFromBin()
@@ -443,12 +451,21 @@ public sealed class EcuViewModel : NotifyPropertyChangedBase
         }
 
         // The picked bin is also this ECU's flash source: record the path (round-trips
-        // via ConfigStore.FlashBinPath) and, for the ford-uds persona, push the
-        // bytes live so $23 reads serve them this session without a config reload. Done
-        // before identity parsing so the flash source sticks even if extraction fails.
+        // via ConfigStore.FlashBinPath) and push the bytes live so a read serves them
+        // this session without a config reload. Done before identity parsing so the
+        // flash source sticks even if extraction fails.
+        //   - ford-uds:  static flashBin backs Service $23.
+        //   - otherwise: KernelFlashSeed backs the PcmHammer/PCMHacking kernel read.
         FlashBinPath = picker.FileName;
         if (Model.Persona.Id == "ford-uds")
+        {
             Core.Ecu.Personas.FordUdsPersona.LoadFlashBin(bytes);
+        }
+        else
+        {
+            Model.KernelFlashSeed = bytes;
+            Model.State.KernelFlash = null;   // drop any stale working copy; next read re-seeds
+        }
 
         var result = Mode1ADidBinExtractor.Parse(bytes);
         if (result == null)

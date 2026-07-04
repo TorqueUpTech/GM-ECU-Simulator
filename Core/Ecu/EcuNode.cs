@@ -148,6 +148,13 @@ public sealed class EcuNode
     // mirror, not a second copy of the data.
     public string? FlashBinPath { get; set; }
 
+    // Pristine flash image the PcmHammer/PCMHacking kernel starts each session
+    // from (loaded from FlashBinPath by ConfigStore for non-Ford ECUs). Null =
+    // blank $FF. Distinct from NodeState.KernelFlash, the per-session working
+    // copy the kernel reads / erases / writes; the seed survives session resets
+    // so every read returns the seeded image, not the previous session's writes.
+    public byte[]? KernelFlashSeed { get; set; }
+
     // ---- Flash-timing profile (ford-uds flash-write path) ----
     //
     // A simulator answers instantly, so a flash write completes in well under

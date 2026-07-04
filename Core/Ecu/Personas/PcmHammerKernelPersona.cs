@@ -34,6 +34,9 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
     public string DisplayName => "PcmHammer flash kernel";
 
     private const byte KernelQuery = 0x3D;         // mode $3D (kernel query/erase)
+    private const byte KernelRead = 0x35;          // mode $35 (kernel memory read)
+    private const byte MemoryReadAck = 0x75;       // $75 ack to $35, before the $36 data block
+    private const byte MemoryBlockResponse = 0x36; // $36 block carries read data (same byte as TransferData)
     private const int  FlashSize = 0x200000;       // 2 MiB address space
     private const uint EraseSectorSize = 0x10000;  // 64 KiB sectors
 
@@ -42,6 +45,12 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
                         DiagnosticStack stack)
     {
         _ = nowMs; _ = stack;
+        // A running flash kernel is custom RAM code that ignores stock GMW3110 P3C -
+        // it answers until $20. Reset P3C on every kernel request so a long read/write
+        // (which sends $35/$3D/$36, not $3E) doesn't trip the 5 s P3Cnom timeout and
+        // revert us to Gmw3110Persona mid-operation (observed: a continuous $35 read
+        // reverted at ~5 s / address 0x008000 -> $7F 35 11 -> the dash's ERR_READ).
+        node.State.TesterPresent.Reset();
         if (isFunctional) return true;   // kernel answers only physically-addressed requests
 
         switch (sid)
@@ -58,6 +67,9 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
             case Service.TransferData:       // $36 kernel flash-write (not the boot-ROM form)
                 HandleFlashWrite(node, usdt, ch);
                 return true;
+            case KernelRead:                 // $35 kernel memory read -> streams a $36 block back
+                HandleMemoryRead(node, usdt, ch);
+                return true;
             default:
                 return false;                // NRC $11 ServiceNotSupported, like a real kernel
         }
@@ -69,6 +81,12 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
         {
             var f = new byte[FlashSize];
             f.AsSpan().Fill(0xFF);
+            // Seed from the ECU's loaded bin (FlashBinPath -> KernelFlashSeed) so a
+            // real tool's READ returns a genuine image instead of blank $FF.
+            // Truncated / $FF-padded to the 2 MiB address space.
+            var seed = node.KernelFlashSeed;
+            if (seed is { Length: > 0 })
+                seed.AsSpan(0, Math.Min(seed.Length, FlashSize)).CopyTo(f);
             node.State.KernelFlash = f;
         }
         return node.State.KernelFlash;
@@ -81,6 +99,11 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
         {
             case 0x00:   // version / probe
                 Respond(node, ch, [Service.Positive(KernelQuery), 0x00, 0x00, 0x00, 0x00, 0x01]);
+                return;
+
+            case 0x01:   // flash chip id: $3D $01 -> $7D $01 <id4>. A zero/unknown id
+                         // makes PcmHammer keep the E38 2 MiB profile size for the read.
+                Respond(node, ch, [Service.Positive(KernelQuery), 0x01, 0x00, 0x00, 0x00, 0x00]);
                 return;
 
             case 0x02:   // CRC-32: $3D $02 <size3> <addr3>  (size precedes address)
@@ -138,6 +161,40 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
                 data.CopyTo(flash.AsSpan((int)addr));
         }
         Respond(node, ch, [Service.Positive(Service.TransferData)]);   // $76
+    }
+
+    // $35 [len hi,mid,lo] [addr hi,mid,lo] -> a $75 ack, then a $36 data block:
+    // $36 $00 [addr hi,mid,lo] [<len> data bytes]. PcmHammer's CanKernelReader
+    // filters the $75 ack and reassembles the $36 block (Gmlan.ParseMemoryBlock:
+    // header 36 00 addr3, then exactly <len> bytes). The read streams straight
+    // from NodeState.KernelFlash, which Flash() seeds from the ECU's loaded bin.
+    private static void HandleMemoryRead(EcuNode node, ReadOnlySpan<byte> usdt, ChannelSession ch)
+    {
+        if (usdt.Length < 7) { SendNrc(node, ch, KernelRead, Nrc.SubFunctionNotSupportedInvalidFormat); return; }
+        int len = (usdt[1] << 16) | (usdt[2] << 8) | usdt[3];
+        uint addr = (uint)((usdt[4] << 16) | (usdt[5] << 8) | usdt[6]);
+        if (len <= 0 || (long)addr + len > FlashSize)
+        {
+            SendNrc(node, ch, KernelRead, Nrc.RequestOutOfRange);
+            return;
+        }
+
+        byte[] flash = Flash(node);
+
+        // The CAN-Display's E38 reader (readBlockE38) waits for the $75 ack first (2 s),
+        // THEN the multi-frame $36 data block (3 s) - matching a real Antus kernel. Send
+        // both: $75 ack, then the $36 block. The block's CFs are paced by the reader's
+        // FlowControl STmin (honoured by IsoTpFragmenter), so a receiver that can't take
+        // frames back-to-back must request a non-zero STmin in its FC.
+        Respond(node, ch, [MemoryReadAck]);                 // $75 ack
+        var block = new byte[5 + len];
+        block[0] = MemoryBlockResponse;                     // $36
+        block[1] = 0x00;                                    // sub-type (matches ParseMemoryBlock)
+        block[2] = (byte)(addr >> 16);
+        block[3] = (byte)(addr >> 8);
+        block[4] = (byte)addr;
+        flash.AsSpan((int)addr, len).CopyTo(block.AsSpan(5));
+        Respond(node, ch, block);
     }
 
     private static void Respond(EcuNode node, ChannelSession ch, ReadOnlySpan<byte> payload)

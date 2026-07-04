@@ -1306,7 +1306,7 @@
                                            FontWeight="SemiBold" FontSize="15"/>
                                 <Button Grid.Column="1" Width="28" Height="22" Padding="0" Margin="0,0,6,0"
                                         Command="{Binding LoadInfoFromBinCommand}"
-                                        ToolTip="Pick a GM ECU flash readback (.bin). Sets it as this ECU's identity source (prompts before overwriting $1A DIDs) and flash bin source (Service $23 reads).">
+                                        ToolTip="Pick a GM ECU flash readback (.bin). Sets it as this ECU's identity source (prompts before overwriting $1A DIDs) and flash image source - it backs the PcmHammer/PCMHacking kernel read/CRC (and Ford Service $23).">
                                     <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </Button>

@@ -104,6 +104,7 @@ public sealed class BroadcastScheduler : IDisposable
         {
             var broadcaster = bus.Broadcaster;
             if (broadcaster == null) return;          // no open channel -> nowhere to deliver
+            if (bus.AnyKernelActive) return;          // real bus goes silent during programming
             var payload = msg.BuildPayload(node.EngineModel, bus.NowMs);
             var frame = new byte[CanFrame.IdBytes + payload.Length];
             CanFrame.WriteId(frame, msg.CanId);

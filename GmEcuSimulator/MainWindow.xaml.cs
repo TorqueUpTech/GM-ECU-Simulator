@@ -3,6 +3,7 @@ using GmEcuSimulator.ViewModels;
 using GMThemeManager;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -438,6 +439,71 @@ public partial class MainWindow : Window
         catch { /* user can navigate manually if shell launch fails */ }
     }
 
+    private void OnSetCaptureFolderClicked(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var initialFolder = vm?.Capture?.CaptureDirectory;
+            if (string.IsNullOrEmpty(initialFolder) || initialFolder == "(not set)")
+            {
+                initialFolder = CaptureSettings.DefaultDirectory();
+            }
+
+            if (BrowseForFolder("Select a folder for captured kernel and calibration files (.bin):",
+                                initialFolder, out var selectedPath))
+            {
+                if (vm?.Capture is not null)
+                {
+                    vm.Capture.CaptureDirectory = selectedPath;
+                }
+            }
+        }
+        catch { /* user can navigate manually if shell launch fails */ }
+    }
+
+    // Use Windows shell BrowseForFolder to pick a directory (no external dependencies).
+    private static bool BrowseForFolder(string title, string initialPath, out string selectedPath)
+    {
+        selectedPath = "";
+        IntPtr pidlRoot = IntPtr.Zero;
+        IntPtr pszPath = Marshal.AllocCoTaskMem(260);
+
+        try
+        {
+            // Ensure initial path exists
+            if (!string.IsNullOrEmpty(initialPath) && System.IO.Directory.Exists(initialPath))
+            {
+                Marshal.StringToCoTaskMemUni(initialPath);
+            }
+
+            BROWSEINFO bi = new BROWSEINFO
+            {
+                ulFlags = 0x0040,  // BIF_NEWDIALOGSTYLE
+                lpszTitle = title,
+                pszDisplayName = pszPath,
+                hwndOwner = IntPtr.Zero,
+            };
+
+            IntPtr pidlSelected = Win32.SHBrowseForFolder(ref bi);
+            if (pidlSelected != IntPtr.Zero)
+            {
+                char[] path = new char[260];
+                if (Win32.SHGetPathFromIDList(pidlSelected, path))
+                {
+                    selectedPath = new string(path).TrimEnd('\0');
+                    Marshal.FreeCoTaskMem(pidlSelected);
+                    return true;
+                }
+            }
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(pszPath);
+        }
+
+        return false;
+    }
+
     // Double-click on the splitter between CAN frames and J2534 calls panes
     // restores the 50/50 split. After a drag, the column widths land at e.g.
     // "1.4*" / "0.6*" - resetting both to plain "1*" puts the divider back
@@ -784,4 +850,27 @@ public partial class MainWindow : Window
                 new Point(Marker.X, Marker.Top + Marker.Height));
         }
     }
+}
+
+// P/Invoke definitions for Windows shell BrowseForFolder dialog.
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+internal struct BROWSEINFO
+{
+    public IntPtr hwndOwner;
+    public IntPtr pidlRoot;
+    public IntPtr pszDisplayName;
+    public string? lpszTitle;
+    public uint ulFlags;
+    public IntPtr lpfn;
+    public IntPtr lParam;
+    public int iImage;
+}
+
+internal static class Win32
+{
+    [System.Runtime.InteropServices.DllImport("shell32.dll")]
+    public static extern IntPtr SHBrowseForFolder(ref BROWSEINFO bi);
+
+    [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    public static extern bool SHGetPathFromIDList(IntPtr pidl, char[] pszPath);
 }

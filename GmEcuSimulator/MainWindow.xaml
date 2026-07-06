@@ -270,6 +270,12 @@
                      path available for tests, quick setups, and DPS-free
                      debugging where a real readback isn't to hand. -->
                 <MenuItem Header="_Tools">
+                    <MenuItem Header="_Capture">
+                        <MenuItem Header="Set capture _directory…"
+                                  Click="OnSetCaptureFolderClicked"
+                                  ToolTip="Choose where to save captured kernel uploads and calibration writes (.bin files)."/>
+                    </MenuItem>
+                    <Separator/>
                     <MenuItem Header="_Developer">
                         <MenuItem Header="Add _blank ECU"
                                   Command="{Binding AddBlankEcuCommand}"

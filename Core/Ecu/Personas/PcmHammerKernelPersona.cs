@@ -38,7 +38,12 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
     private const byte MemoryReadAck = 0x75;       // $75 ack to $35, before the $36 data block
     private const byte MemoryBlockResponse = 0x36; // $36 block carries read data (same byte as TransferData)
     private const int  FlashSize = 0x200000;       // 2 MiB address space
-    private const uint EraseSectorSize = 0x10000;  // 64 KiB sectors
+    // Real E38-class 2 MiB flash uses LARGE blocks -- PcmHammer's chip map (AM29BL162C, the
+    // only 2 MiB entry in FlashChip.cs) is 256 KiB blocks across the main array. Modelling
+    // 64 KiB here HID a brick-class flasher bug (cal segments 1..5 share the ONE 0x1C0000
+    // block, so an interleaved erase-then-write wipes earlier segments). Erase the whole
+    // 256 KiB block so the sim exercises that reality.
+    private const uint EraseSectorSize = 0x40000;  // 256 KiB blocks (Gen-IV main array)
 
     public bool Dispatch(EcuNode node, ReadOnlySpan<byte> usdt, ChannelSession ch,
                         bool isFunctional, byte sid, double nowMs, DpidScheduler scheduler,
@@ -101,9 +106,11 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
                 Respond(node, ch, [Service.Positive(KernelQuery), 0x00, 0x00, 0x00, 0x00, 0x01]);
                 return;
 
-            case 0x01:   // flash chip id: $3D $01 -> $7D $01 <id4>. A zero/unknown id
-                         // makes PcmHammer keep the E38 2 MiB profile size for the read.
-                Respond(node, ch, [Service.Positive(KernelQuery), 0x01, 0x00, 0x00, 0x00, 0x00]);
+            case 0x01:   // flash chip id: $3D $01 -> $7D $01 <id4>. Report AMD AM29BL162C
+                         // (0x00012203) -- PcmHammer's 2 MiB chip, 256 KiB main-array blocks --
+                         // so a host that reads the id picks the right (large) erase block and
+                         // its erase geometry matches this persona's 256 KiB EraseSectorSize.
+                Respond(node, ch, [Service.Positive(KernelQuery), 0x01, 0x00, 0x01, 0x22, 0x03]);
                 return;
 
             case 0x02:   // CRC-32: $3D $02 <size3> <addr3>  (size precedes address)
@@ -118,7 +125,7 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
                 return;
             }
 
-            case 0x05:   // erase the 64 KiB sector containing addr: $3D $05 <addr3>
+            case 0x05:   // erase the flash BLOCK (EraseSectorSize) containing addr: $3D $05 <addr3>
             {
                 if (usdt.Length < 5) { SendNrc(node, ch, KernelQuery, Nrc.SubFunctionNotSupportedInvalidFormat); return; }
                 uint addr = (uint)((usdt[2] << 16) | (usdt[3] << 8) | usdt[4]);
@@ -158,7 +165,16 @@ public sealed class PcmHammerKernelPersona : IDiagnosticPersona
         {
             byte[] flash = Flash(node);
             if ((long)addr + len <= flash.Length)
+            {
                 data.CopyTo(flash.AsSpan((int)addr));
+                // Track the extent of real writes so BootloaderCaptureWriter.WriteKernelFlash
+                // actually SAVES the flashed image at session end. Without this the high-water
+                // mark stays 0 and only the seed (= the ECU editor's read bin) is written --
+                // i.e. the flash appeared to "save the read file", not what was flashed.
+                uint end = addr + (uint)len;
+                if (end > node.State.KernelFlashWriteHighWaterMark)
+                    node.State.KernelFlashWriteHighWaterMark = end;
+            }
         }
         Respond(node, ch, [Service.Positive(Service.TransferData)]);   // $76
     }

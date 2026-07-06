@@ -101,9 +101,9 @@ public sealed class PcmHammerKernelPersonaTests
     {
         var node = NodeFactory.CreateNode();
         var ch = NodeFactory.CreateChannel();
-        // $3D $01 -> $7D $01 <id4>. A zero id keeps PcmHammer on the E38 profile size.
+        // $3D $01 -> $7D $01 <id4> = AMD AM29BL162C (0x00012203, 256 KiB main-array blocks).
         Assert.True(Dispatch(node, ch, new byte[] { Sid3D, 0x01 }));
-        Assert.Equal(new byte[] { 0x7D, 0x01, 0x00, 0x00, 0x00, 0x00 },
+        Assert.Equal(new byte[] { 0x7D, 0x01, 0x00, 0x01, 0x22, 0x03 },
                      TestFrame.DequeueSingleFrameUsdt(ch));
     }
 
@@ -167,5 +167,36 @@ public sealed class PcmHammerKernelPersonaTests
         Assert.Equal(new byte[] { 0x75 }, TestFrame.DequeueSingleFrameUsdt(ch));
         Assert.Equal(new byte[] { 0x36, 0x00, (byte)(addr >> 16), (byte)(addr >> 8), (byte)addr, data[0], data[1] },
                      TestFrame.DequeueSingleFrameUsdt(ch));
+    }
+
+    [Fact]
+    public void FlashWrite_TracksHighWaterMark_SoTheFlashedImageIsSaved()
+    {
+        // Regression: HandleFlashWrite used to copy into KernelFlash but never advance
+        // KernelFlashWriteHighWaterMark. BootloaderCaptureWriter.WriteKernelFlash gates the
+        // post-flash image dump on HWM > 0, so a flash "saved" only the seed (the ECU
+        // editor's read bin), not what was flashed. HWM must now reflect the write extent.
+        var node = NodeFactory.CreateNode();
+        var ch = NodeFactory.CreateChannel();
+        Assert.Equal(0u, node.State.KernelFlashWriteHighWaterMark);
+
+        uint addr = 0x03D000;
+        byte[] data = { 0x01, 0x02, 0x03, 0x04 };
+        ushort sum = 0; foreach (var b in data) sum += b;
+        var write = new byte[7 + data.Length + 2];
+        write[0] = Sid36; write[1] = 0x00;
+        write[2] = (byte)(data.Length >> 8); write[3] = (byte)data.Length;
+        write[4] = (byte)(addr >> 16); write[5] = (byte)(addr >> 8); write[6] = (byte)addr;
+        data.CopyTo(write, 7);
+        write[7 + data.Length] = (byte)(sum >> 8); write[7 + data.Length + 1] = (byte)sum;
+        Assert.True(Dispatch(node, ch, write));
+
+        Assert.Equal(addr + (uint)data.Length, node.State.KernelFlashWriteHighWaterMark);
+
+        // A test-write ($44, validate-only) must NOT program or advance the mark.
+        uint hwm = node.State.KernelFlashWriteHighWaterMark;
+        write[1] = 0x44; write[4] = (byte)((addr + 0x1000) >> 16); write[5] = (byte)((addr + 0x1000) >> 8); write[6] = (byte)(addr + 0x1000);
+        Assert.True(Dispatch(node, ch, write));
+        Assert.Equal(hwm, node.State.KernelFlashWriteHighWaterMark);
     }
 }

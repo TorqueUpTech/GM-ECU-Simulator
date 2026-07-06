@@ -65,6 +65,10 @@ public static class EcuExitLogic
             // followed by another $34 (e.g. cal-only flow ended via $20, or
             // P3C timed out mid-transfer) still gets a tagged dump here.
             BootloaderCaptureWriter.WriteCompletedBracketIfKernel(node, captureBus, "end");
+            // Kernel-phase writes: if a PcmHammer kernel was running and received
+            // calibration $36 writes via HandleFlashWrite, consolidate them here.
+            BootloaderCaptureWriter.WriteKernelFlash(node, captureBus);
+            // Bootloader-phase writes: if regions were declared via $31, consolidate.
             BootloaderCaptureWriter.WriteFlashRegions(node, captureBus);
         }
 

@@ -68,6 +68,78 @@ public static class BootloaderCaptureWriter
     }
 
     /// <summary>
+    /// Kernel-flash session-end dump. When a PcmHammer/PCMHacking flash kernel
+    /// is running, its writes land in NodeState.KernelFlash (2 MiB, $FF on erase,
+    /// overwritten by $36 writes). This dumps only the written region at session
+    /// end as one consolidated file, separate from the per-$36 audit fragments.
+    /// Unwritten bytes are $FF (post-erase state), matching on-device reality.
+    ///
+    /// Naming: {seq:D3}_kernel_flash_{start:X8}_{size}.bin. The leading seq
+    /// sorts after individual $36 fragments. Size is the extent of actual writes,
+    /// not the full 2 MiB buffer.
+    ///
+    /// Called from EcuExitLogic before ClearProgrammingState wipes the buffer.
+    /// No-op when no CaptureDirectory is set, KernelFlash is null, or no writes
+    /// occurred (high water mark is 0).
+    /// </summary>
+    public static void WriteKernelFlash(EcuNode node, VirtualBus bus)
+    {
+        var settings = bus.Capture;
+        if (string.IsNullOrEmpty(settings.CaptureDirectory)) return;
+        if (node.State.KernelFlash is null) return;
+
+        try
+        {
+            var tsLocal = node.State.DownloadCaptureSessionTimestamp ?? DateTime.Now;
+            string ts = tsLocal.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+            string sessionDir = string.Format(CultureInfo.InvariantCulture,
+                "{0}_{1}", Sanitise(node.Name), ts);
+            string fullDir = Path.Combine(settings.CaptureDirectory!, sessionDir);
+            Directory.CreateDirectory(fullDir);
+
+            uint startAddr = 0u;  // Kernel flash always starts at 0x0
+
+            // Write seed file if a bin was pre-loaded.
+            if (node.KernelFlashSeed is { Length: > 0 })
+            {
+                uint seq = node.State.DownloadCaptureSequence++;
+                uint seedSize = (uint)node.KernelFlashSeed.Length;
+                string seedFileName = string.Format(CultureInfo.InvariantCulture,
+                    "{0:D3}_kernel_seed_{1:X8}_{2}.bin", seq, startAddr, seedSize);
+                string seedPath = Path.Combine(fullDir, seedFileName);
+
+                File.WriteAllBytes(seedPath, node.KernelFlashSeed);
+                bus.LogSim?.Invoke(
+                    $"[capture] kernel seed: {seedSize} B @ 0x{startAddr:X8} -> {seedPath}");
+                settings.RaiseCaptureWritten(seedPath);
+            }
+
+            // If any $36 calibration writes occurred this session, save the FULL post-flash
+            // device image (the seed with the writes merged in) -- this is what a read-back
+            // returns and what "save the file you flashed" means. The high-water mark just
+            // gates that writes actually happened (a read-only session writes only the seed).
+            if (node.State.KernelFlashWriteHighWaterMark > 0)
+            {
+                uint seq = node.State.DownloadCaptureSequence++;
+                uint hwm = node.State.KernelFlashWriteHighWaterMark;
+                uint imgSize = (uint)node.State.KernelFlash.Length;   // full 2 MiB device image
+                string writesFileName = string.Format(CultureInfo.InvariantCulture,
+                    "{0:D3}_kernel_flashed_{1:X8}_{2}.bin", seq, startAddr, imgSize);
+                string writesPath = Path.Combine(fullDir, writesFileName);
+
+                File.WriteAllBytes(writesPath, node.State.KernelFlash);
+                bus.LogSim?.Invoke(
+                    $"[capture] post-flash device image: {imgSize} B (writes up to 0x{hwm:X}) -> {writesPath}");
+                settings.RaiseCaptureWritten(writesPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            bus.LogSim?.Invoke($"[capture] kernel flash write failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Session-end consolidated flash dump. For every region the kernel
     /// declared via $31 EraseMemoryByAddress, writes one .bin sized to the
     /// declared erase length (any byte not overwritten by a $36 stays at

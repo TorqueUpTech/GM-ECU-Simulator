@@ -33,7 +33,16 @@ public sealed class CaptureViewModel : NotifyPropertyChangedBase
         Refresh();
     }
 
-    public string CaptureDirectory => settings.CaptureDirectory ?? "(not set)";
+    public string CaptureDirectory
+    {
+        get => settings.CaptureDirectory ?? "(not set)";
+        set
+        {
+            settings.CaptureDirectory = value;
+            OnPropertyChanged(nameof(CaptureDirectory));
+            Refresh();
+        }
+    }
 
     private void OnCaptureWritten(string path)
     {

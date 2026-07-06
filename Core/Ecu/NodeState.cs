@@ -262,6 +262,14 @@ public sealed class NodeState
     public byte[]? KernelFlash { get; set; }
 
     /// <summary>
+    /// High-water mark of writes to KernelFlash during the current kernel
+    /// session. Tracks the highest address written so only modified regions
+    /// are captured at session end (avoiding 2 MiB dumps of mostly-0xFF seed).
+    /// Reset by ClearProgrammingState.
+    /// </summary>
+    public uint KernelFlashWriteHighWaterMark { get; set; }
+
+    /// <summary>
     /// Wipes all programming + download flags. Called from EcuExitLogic so $20
     /// and P3C timeout return the ECU to Normal Communication Mode.
     /// </summary>
@@ -282,6 +290,7 @@ public sealed class NodeState
         DownloadCaptureSessionTimestamp = null;
         CapturedFlashRegions.Clear();
         KernelFlash = null;
+        KernelFlashWriteHighWaterMark = 0;
         // T43 (6Speed) RAW kernel state (T43RawKernelBridge). The write path stays
         // on Gmw3110 -- no persona swap -- so its $20 funnels through here (via
         // EcuExitLogic) rather than through T43KernelPersona.ReturnToNormalMode.
